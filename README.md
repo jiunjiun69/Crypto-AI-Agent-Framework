@@ -272,6 +272,14 @@ crypto_agent/
 
 ---
 
+### 初版串接成果
+
+<img src="./img/初版Demo.png" width="100%" /> 
+
+> 品質有待加強...
+
+---
+
 ## 🛣 未來規劃（Roadmap）
 
 短期：
