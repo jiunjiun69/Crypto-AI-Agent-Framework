@@ -304,3 +304,5 @@ crypto_agent/
 
 **不構成任何投資建議。**
 加密貨幣波動極大，請自行評估風險與資金配置，勿槓桿梭哈、勿過度依賴模型或 AI 判斷。
+
+<img src="https://github.com/jiunjiun69/jiunjiun69/blob/main/marquee-rainbow-multi.svg" width="100%" />
