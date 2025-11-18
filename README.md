@@ -7,7 +7,8 @@
 
 ## 🧾 為什麼需要 Crypto AI Agent？
 
-![炒幣需要大量知識與時間](img/1. 炒幣需求知識.jpg)
+<!-- ![炒幣需要大量知識與時間](https://github.com/jiunjiun69/Crypto-AI-Agent-Framework/blob/main/img/1.%20%E7%82%92%E5%B9%A3%E9%9C%80%E6%B1%82%E7%9F%A5%E8%AD%98.jpg) -->
+<img src="https://github.com/jiunjiun69/Crypto-AI-Agent-Framework/blob/main/img/1.%20%E7%82%92%E5%B9%A3%E9%9C%80%E6%B1%82%E7%9F%A5%E8%AD%98.jpg" alt="炒幣需要大量知識與時間" width="600"/>
 
 傳統在幣圈要做決策，往往需要同時關注：
 
@@ -195,7 +196,8 @@ crypto_agent/
 
 ### 1. 週線 SMA50 / SMA100 參數設定
 
-![Analysis Agent - 週線 SMA50/100 參數設定](img/2. Analysis Agent - TradingView策略回測-Sma50_100周線參數.png)
+<!-- ![Analysis Agent - 週線 SMA50/100 參數設定](https://github.com/jiunjiun69/Crypto-AI-Agent-Framework/blob/main/img/2.%20Analysis%20Agent%20-%20TradingView%E7%AD%96%E7%95%A5%E5%9B%9E%E6%B8%AC-Sma50_100%E5%91%A8%E7%B7%9A%E5%8F%83%E6%95%B8.png) -->
+<img src="https://github.com/jiunjiun69/Crypto-AI-Agent-Framework/blob/main/img/2.%20Analysis%20Agent%20-%20TradingView%E7%AD%96%E7%95%A5%E5%9B%9E%E6%B8%AC-Sma50_100%E5%91%A8%E7%B7%9A%E5%8F%83%E6%95%B8.png" alt="Analysis Agent - 週線 SMA50/100 參數設定" width="300"/>
 
 * Weekly SMA 短期：50 週
 * Weekly SMA 長期：100 週
@@ -205,7 +207,7 @@ crypto_agent/
 
 ### 2. 策略屬性設定（現貨、全倉持有）
 
-![Analysis Agent - 策略屬性設定](img/3. Analysis Agent - TradingView策略回測-Sma50_100周線參數.png)
+<img src="https://github.com/jiunjiun69/Crypto-AI-Agent-Framework/blob/main/img/3.%20Analysis%20Agent%20-%20TradingView%E7%AD%96%E7%95%A5%E5%9B%9E%E6%B8%AC-Sma50_100%E5%91%A8%E7%B7%9A%E5%8F%83%E6%95%B8.png" alt="Analysis Agent - 策略屬性設定" width="300"/>
 
 * 初始資本：100 USD（純作報酬倍數參考）
 * Default order size：100% 權益（進場即全倉）
@@ -213,7 +215,7 @@ crypto_agent/
 
 ### 3. 週線走勢與策略進出場標記
 
-![Analysis Agent - 週線圖與進出場](img/4. Analysis Agent - TradingView策略回測-概要.png)
+<img src="https://github.com/jiunjiun69/Crypto-AI-Agent-Framework/blob/main/img/4.%20Analysis%20Agent%20-%20TradingView%E7%AD%96%E7%95%A5%E5%9B%9E%E6%B8%AC-概要.png" alt="Analysis Agent - 週線圖與進出場" width="800"/>
 
 * 背景綠色：Bull Regime（牛市區間，持有現貨）
 * 背景紅色：Bear Regime（熊市區間，空手）
@@ -227,7 +229,7 @@ crypto_agent/
 
 ### 4. 策略績效摘要
 
-![Analysis Agent - 策略績效](img/5. Analysis Agent - TradingView策略回測-績效.png)
+<img src="https://github.com/jiunjiun69/Crypto-AI-Agent-Framework/blob/main/img/5.%20Analysis%20Agent%20-%20TradingView%E7%AD%96%E7%95%A5%E5%9B%9E%E6%B8%AC-績效.png" alt="Analysis Agent - 策略績效" width="800"/>
 
 * 淨利：約 +13,857%（從 100 → 約 13,957 USD）
 * 勝率：100%（總共 3 筆交易，皆為大牛市波段）
@@ -238,7 +240,7 @@ crypto_agent/
 
 ### 5. 交易分析
 
-![Analysis Agent - 交易分析](img/6. Analysis Agent - TradingView策略回測-交易分析.png)
+<img src="https://github.com/jiunjiun69/Crypto-AI-Agent-Framework/blob/main/img/6.%20Analysis%20Agent%20-%20TradingView%E7%AD%96%E7%95%A5%E5%9B%9E%E6%B8%AC-交易分析.png" alt="Analysis Agent - 交易分析" width="800"/>
 
 * 總交易量：3 筆（全部為多頭）
 * 平均獲利交易：約 +497%
@@ -247,7 +249,7 @@ crypto_agent/
 
 ### 6. 風險 / 績效指標
 
-![Analysis Agent - 風險與績效比](img/7. Analysis Agent - TradingView策略回測-風險績效比.png)
+<img src="https://github.com/jiunjiun69/Crypto-AI-Agent-Framework/blob/main/img/7.%20Analysis%20Agent%20-%20TradingView%E7%AD%96%E7%95%A5%E5%9B%9E%E6%B8%AC-%E9%A2%A8%E9%9A%AA%E7%B8%BE%E6%95%88%E6%AF%94.png" alt="Analysis Agent - 風險與績效比" width="800"/>
 
 * 夏普比率：約 0.125（長週期策略，持有時間極長）
 * 獲利因子：接近 1,000（因為無虧損交易＋報酬極大）
@@ -256,7 +258,7 @@ crypto_agent/
 
 ### 7. 交易清單
 
-![Analysis Agent - 交易清單](img/8. Analysis Agent - TradingView策略回測-交易清單.png)
+<img src="https://github.com/jiunjiun69/Crypto-AI-Agent-Framework/blob/main/img/8.%20Analysis%20Agent%20-%20TradingView%E7%AD%96%E7%95%A5%E5%9B%9E%E6%B8%AC-%E4%BA%A4%E6%98%93%E6%B8%85%E5%96%AE.png" alt="Analysis Agent - 交易清單" width="800"/>
 
 清楚列出三筆交易的進出點、價格與報酬率：
 
