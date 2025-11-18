@@ -95,6 +95,38 @@ crypto_agent/
 > **「抓資料 → 計算技術指標 → 判斷 Regime → 丟給 LLM 產生建議」**
 > 確認輸出合理後，再接上 LINE Webhook ＋ 部署到 GCP。
 
+### 本地執行時，crypto_agent中需加入`.env`檔案，加入自己的Key:
+
+```
+OPENAI_API_KEY=
+BINANCE_API_KEY=
+BINANCE_API_SECRET=
+SYMBOL=BTCUSDT
+```
+
+裝好套件（專案資料夾裡）：
+
+```
+pip install -r requirements.txt
+```
+
+然後執行：
+
+```
+python run_local.py
+```
+
+接下來程式的預期流程大概是：
+
+- data_binance.py 用 BINANCE_* 去抓 BTC 週線＋日線 K 線 & 量價
+
+- indicators.py 算出週線 Regime（Bull/Bear/Warning/Neutral）＋ 日線量價型態
+
+- llm_client.py 用 OPENAI_API_KEY call OpenAI，生成一段中文說明
+
+- run_local.py 把整段結果 print 在 terminal（之後才會改成傳到 LINE）
+
+
 ---
 
 ## 📊 Analysis Agent 指標 – 長週期策略邏輯（週線 SMA Regime）
