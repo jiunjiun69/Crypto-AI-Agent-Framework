@@ -13,6 +13,7 @@ BINANCE_API_SECRET = os.getenv("BINANCE_API_SECRET", "")
 
 # OpenAI
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")  # 預設用 gpt-4o-mini
 
 # 週線 MA 設定
 WEEKLY_SMA_SHORT = 50
