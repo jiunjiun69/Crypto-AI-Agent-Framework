@@ -61,7 +61,7 @@ flowchart LR
   * **日線量價型態** → 判斷放量下跌／放量上漲／縮量上漲／縮量橫盤… 等狀態
 
 * **Advice Agent**
-  使用 OpenAI LLM（之後可替換為 Ollama、vLLM 等）：
+  使用 OpenAI LLM（之後可替換為 Ollama、vLLM、OpenRouter 等）：
 
   * 將長週期 Regime(市場景況) + 日線量價狀態，整理成 **人類可讀的中文說明**
   * 產出偏「現貨長線、風險控管」的建議，而不是報明牌／精準價格預測
