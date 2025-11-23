@@ -7,13 +7,22 @@ load_dotenv()
 # 幣種
 SYMBOL = os.getenv("SYMBOL", "BTCUSDT")
 
-# Binance（抓 K 線其實不一定要 key，但先保留欄位）
+# Binance
 BINANCE_API_KEY = os.getenv("BINANCE_API_KEY", "")
 BINANCE_API_SECRET = os.getenv("BINANCE_API_SECRET", "")
+
+# ---- LLM backend 選擇 ----
+# openai / ollama
+LLM_BACKEND = os.getenv("LLM_BACKEND", "openai").lower()
 
 # OpenAI
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")  # 預設用 gpt-4o-mini
+
+# Ollama （可接本機 or Colab）
+# 優先使用 OLLAMA_BASE_URL，沒設才 fallback OLLAMA_HOST
+OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL") or os.getenv("OLLAMA_HOST", "http://localhost:11434")
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "gpt-oss")
 
 # 週線 MA 設定
 WEEKLY_SMA_SHORT = 50

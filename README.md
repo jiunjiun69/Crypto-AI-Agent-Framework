@@ -99,9 +99,16 @@ crypto_agent/
 
 ```
 OPENAI_API_KEY=
+OPENAI_MODEL=gpt-4o-mini
 BINANCE_API_KEY=
 BINANCE_API_SECRET=
 SYMBOL=BTCUSDT
+# ---- LLM backend 選擇 ----
+LLM_BACKEND=ollama
+# 在 OLLAMA 裡預先 pull 的模型名稱
+OLLAMA_MODEL=gpt-oss
+# LangChain Ollama URL (default:http://localhost:11434/)
+OLLAMA_BASE_URL=http://localhost:11434/
 ```
 
 裝好套件（專案資料夾裡）：
@@ -126,6 +133,12 @@ python run_local.py
 
 - run_local.py 把整段結果 print 在 terminal（之後才會改成傳到 LINE）
 
+假設使用ollama需要切換主機：
+```
+OLLAMA_HOST= <URL>   #指定 HOST
+ollama pull gpt-oss  #拉取
+ollama run gpt-oss   #測試
+```
 
 ---
 
@@ -306,7 +319,7 @@ python run_local.py
 
 ### 初版串接成果
 
-<img src="./img/初版Demo.png" width="100%" /> 
+<img src="./img/Demo2.png" width="100%" /> 
 
 > 品質有待加強...
 
@@ -316,6 +329,7 @@ python run_local.py
 
 短期：
 
+* [x] 加入連接 langchain ollama (可切換ollama/OpenAI API)
 * [ ] 加入 LINE Messaging API webhook，部署到 GCP Cloud Run
 * [ ] 在 LINE 中用自然語言指令查詢，例如「查 BTC」「查 ETH」「幫我看週線」
 * [ ] 增加簡單風險提示（例如：近期高波動、槓桿市場過熱等）
