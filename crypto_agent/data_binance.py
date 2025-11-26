@@ -1,4 +1,3 @@
-# data_binance.py
 from binance.client import Client
 import pandas as pd
 from typing import Optional

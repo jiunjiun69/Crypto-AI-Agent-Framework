@@ -1,4 +1,3 @@
-# llm_client.py
 from typing import Optional
 
 from openai import OpenAI
