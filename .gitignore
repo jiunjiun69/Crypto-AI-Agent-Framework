@@ -1,0 +1,3 @@
+.DS_Store
+# 防止子資料夾的也被加到 git
+/.DS_Store
