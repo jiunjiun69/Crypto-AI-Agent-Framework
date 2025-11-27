@@ -8,26 +8,26 @@ Nodes:
   - call_llm_node           (Advice Agent 呼叫 LLM)
   - format_message_node     (Interface Agent：整理成 LINE 訊息)
 
-讓邏輯保留在既有的 modules 裡，只用 LangGraph 做 orchestration。
+邏輯仍然放在既有 modules，只用 LangGraph 做 orchestration。
 """
 
 from typing import Dict, Any
 from typing_extensions import TypedDict
 
-from langgraph.graph import StateGraph, START, END  # 核心 API 
+from langgraph.graph import StateGraph, START, END
 
 from config import SYMBOL
 from data_binance import get_daily_klines, get_weekly_klines
 from indicators import compute_weekly_regime, analyze_daily_volume_price
 from line_formatter import build_prompt_for_llm, format_line_message
 from llm_client import LLMClient
+from observability import langfuse
 
 
 # 1. 定義 Graph 的 State Schema
 class AgentState(TypedDict, total=False):
     """
-    LangGraph 會在節點之間傳遞的狀態。
-    用 TypedDict 只是幫型別檢查，實際 runtime 跟 dict 一樣。
+    LangGraph 在節點之間傳遞的狀態。
     """
     symbol: str
 
@@ -36,13 +36,14 @@ class AgentState(TypedDict, total=False):
     weekly_row: Dict[str, float]
     daily_pattern: Dict[str, Any]
 
-    # Advice Agent / Interface Agent 用
+    # Advice / Interface Agent 用
     prompt: str
     summary: str
     message: str
 
 
 # 2. 定義各個 Node（節點）
+
 def fetch_and_analyze(state: AgentState) -> AgentState:
     """
     Data Agent + Analysis Agent：
@@ -55,10 +56,8 @@ def fetch_and_analyze(state: AgentState) -> AgentState:
     df_daily = get_daily_klines(symbol)
     df_weekly = get_weekly_klines(symbol)
 
-    # 這裡拿到的是：regime, df_with_sma
     weekly_regime, df_weekly_with_sma = compute_weekly_regime(df_weekly)
 
-    # 取最新一列，並轉成純 dict（裡面是標量）
     df_weekly_sorted = df_weekly_with_sma.sort_values("close_time")
     last = df_weekly_sorted.iloc[-1]
 
@@ -68,7 +67,6 @@ def fetch_and_analyze(state: AgentState) -> AgentState:
         "sma100": float(last["sma100"]),
     }
 
-    # 日線量價分析（你的 analyze_daily_volume_price）
     daily_pattern = analyze_daily_volume_price(df_daily)
 
     return {
@@ -95,17 +93,58 @@ def build_prompt_node(state: AgentState) -> AgentState:
         daily_pattern=daily_pattern,
     )
 
-    return {"prompt": prompt}
+    # 把 prompt 放進 state，後面節點可以直接用
+    state["prompt"] = prompt
+    return state
 
 
 def call_llm_node(state: AgentState) -> AgentState:
     """
-    Advice Agent：呼叫 LLM（OpenAI 或 Ollama）取得中文說明。
+    Advice Agent：
+    - 用 LLM 讀取 prompt，吐出 summary（文字建議）
+    - 順便在 Langfuse 打一個 span（如果有啟用）
     """
+    symbol = state["symbol"]
+    weekly_regime = state["weekly_regime"]
     prompt = state["prompt"]
+
     llm = LLMClient()
-    summary = llm.summarize(prompt)
-    return {"summary": summary}
+
+    span = None
+    # --- Langfuse: 最小整合，只打 span，不玩 trace 物件 ---
+    if langfuse is not None:
+        try:
+            # 這個 API 在新版 SDK 是存在的
+            span = langfuse.start_span(
+                name=f"llm.summarize.{symbol}.{weekly_regime}"
+            )
+        except Exception as e:
+            print(f"[WARN] Langfuse span 建立失敗（略過）： {repr(e)}")
+            span = None
+
+    try:
+        summary = llm.summarize(prompt)
+
+        if span is not None:
+            try:
+                # 新版 end() 幾乎不吃參數，乖乖呼叫就好
+                span.end()
+            except Exception as e:
+                print(f"[WARN] Langfuse span.end 失敗（略過）： {repr(e)}")
+
+    except Exception as e:
+        if span is not None:
+            try:
+                # 出錯一樣先把 span 收掉
+                span.end()
+            except Exception as e2:
+                print(f"[WARN] Langfuse span.end(錯誤) 失敗（略過）： {repr(e2)}")
+        # 把錯繼續往外丟給 LangGraph 處理
+        raise
+
+    # 關鍵：把 summary 存成 state["summary"]，後面 format_message_node 才找得到
+    state["summary"] = summary
+    return state
 
 
 def format_message_node(state: AgentState) -> AgentState:
@@ -115,15 +154,15 @@ def format_message_node(state: AgentState) -> AgentState:
     symbol = state["symbol"]
     summary = state["summary"]
     msg = format_line_message(symbol, summary)
-    return {"message": msg}
+    state["message"] = msg
+    return state
 
 
 # 3. 建立 LangGraph 的 StateGraph
-
 def build_graph():
     """
     建一條：
-      START → fetch_and_analyze → build_prompt_node → call_llm_node → format_message_node → END
+      START → fetch_and_analyze → build_prompt → call_llm → format_message → END
     的有狀態 Graph。
     """
     builder = StateGraph(AgentState)
@@ -147,22 +186,25 @@ def build_graph():
 
 def run_with_graph(symbol: str | None = None) -> str:
     """
-    對外的簡單 API：
+    對外 API：
     - 丟進 symbol
     - 走 LangGraph 流程
-    - 回傳最後的 message（可直接給 LINE 用）
+    - 回傳最後的 message（可直接丟給 LINE）
     """
+    from datetime import datetime
+
     symbol = symbol or SYMBOL
     graph = build_graph()
-    # state 的初始值只需要傳 symbol，其餘會由節點慢慢補完
+
+    print(f"[INFO] Start LangGraph analysis at {datetime.now()}")
+    if langfuse is not None:
+        print("[INFO] Langfuse 已啟用，host = http://localhost:3000")
+
     final_state: AgentState = graph.invoke({"symbol": symbol})
     return final_state["message"]
 
 
 if __name__ == "__main__":
-    import datetime as dt
-
-    print(f"[INFO] Start LangGraph analysis at {dt.datetime.now()}")
     msg = run_with_graph()
     print("\n===== 最終訊息預覽（LangGraph 版本）=====\n")
     print(msg)

@@ -4,9 +4,9 @@ from openai import OpenAI
 from langchain_ollama import OllamaLLM
 
 from config import (
-    LLM_BACKEND,
     OPENAI_API_KEY,
     OPENAI_MODEL,
+    LLM_BACKEND,
     OLLAMA_BASE_URL,
     OLLAMA_MODEL,
 )
@@ -14,59 +14,62 @@ from config import (
 
 class LLMClient:
     """
-    Advice Agent 後端：
-    - backend = "openai": 走 OpenAI Chat Completions
-    - backend = "ollama": 走本地 / 遠端 Ollama（透過 langchain-ollama）
+    負責跟 LLM 對話，目前支援兩種 backend：
+    - openai  （官方 API）
+    - ollama  （本地 / Colab OLLAMA_HOST）
+
+    注意：
+    - 這個 class 現在 **只負責呼叫 LLM**，不再直接呼叫 Langfuse。
+    - Langfuse 的觀測／tracing 統一在 graph_crypto_agent.py + observability.py 處理。
     """
 
-    def __init__(
-        self,
-        backend: Optional[str] = None,
-        api_key: Optional[str] = None,
-        model: Optional[str] = None,
-    ):
-        self.backend = (backend or LLM_BACKEND).lower()
+    def __init__(self) -> None:
+        self.backend = (LLM_BACKEND or "openai").lower()
 
+        # --- 初始化 LLM backend ---
         if self.backend == "ollama":
-            # Ollama backend（可以是本機 localhost，也可以是你 Colab + ngrok 那個 URL）
-            base_url = OLLAMA_BASE_URL
-            mdl = model or OLLAMA_MODEL
-
+            # 使用 LangChain 的 OllamaLLM
             self.llm = OllamaLLM(
-                model=mdl,
-                base_url=base_url,  # 例如 https://xxxx.ngrok-free.app/
+                model=OLLAMA_MODEL,
+                base_url=OLLAMA_BASE_URL,
             )
+            self.client: Optional[OpenAI] = None
+            print(f"[INFO] LLM backend = OLLAMA ({OLLAMA_MODEL}) @ {OLLAMA_BASE_URL}")
         else:
-            # 預設使用 OpenAI
-            self.backend = "openai"
-            self.client = OpenAI(api_key=api_key or OPENAI_API_KEY)
-            self.model = model or OPENAI_MODEL or "gpt-4o-mini"
+            # 使用 OpenAI 官方 client
+            if not OPENAI_API_KEY:
+                raise RuntimeError("OPENAI_API_KEY 未設定，無法使用 OpenAI backend")
+            self.client = OpenAI(api_key=OPENAI_API_KEY)
+            self.llm = None
+            print(f"[INFO] LLM backend = OpenAI ({OPENAI_MODEL})")
 
+    # ----------------------------------------------------
+    # 封裝一個簡單的 summarize(prompt) 給上層使用
+    # ----------------------------------------------------
     def summarize(self, prompt: str) -> str:
         """
-        給一個完整的 prompt（已經包含 persona、週線/日線說明），
-        回傳繁體中文建議。
+        統一入口：
+        - backend = openai -> 呼叫 official OpenAI Chat Completions
+        - backend = ollama -> 呼叫 LangChain OllamaLLM.invoke()
         """
         if self.backend == "ollama":
-            # LangChain Ollama：直接把整個 prompt 丟進去
-            res = self.llm.invoke(prompt)
-            return (res or "").strip()
+            if self.llm is None:
+                raise RuntimeError("Ollama LLM 尚未初始化")
+            # LangChain LLM 介面：直接用 invoke()
+            response_text = self.llm.invoke(prompt)
+        else:
+            if self.client is None:
+                raise RuntimeError("OpenAI client 尚未初始化")
+            resp = self.client.chat.completions.create(
+                model=OPENAI_MODEL,
+                messages=[
+                    {
+                        "role": "user",
+                        "content": prompt,
+                    }
+                ],
+                temperature=0.3,
+            )
+            response_text = resp.choices[0].message.content
 
-        # OpenAI Chat Completions 版本
-        resp = self.client.chat.completions.create(
-            model=self.model,
-            messages=[
-                {
-                    "role": "system",
-                    "content": (
-                        "你是一位偏保守、以風險控管為主的現貨加密貨幣顧問，"
-                        "用繁體中文回答，條列清楚、不要給精準價格與槓桿建議。"
-                    ),
-                },
-                {
-                    "role": "user",
-                    "content": prompt,
-                },
-            ],
-        )
-        return (resp.choices[0].message.content or "").strip()
+        return response_text

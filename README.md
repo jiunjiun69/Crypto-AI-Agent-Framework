@@ -103,12 +103,17 @@ OPENAI_MODEL=gpt-4o-mini
 BINANCE_API_KEY=
 BINANCE_API_SECRET=
 SYMBOL=BTCUSDT
-# ---- LLM backend 選擇 ----
+# ---- LLM backend 選擇( ollama / openai ) ----
 LLM_BACKEND=ollama
 # 在 OLLAMA 裡預先 pull 的模型名稱
-OLLAMA_MODEL=gpt-oss
-# LangChain Ollama URL (default:http://localhost:11434/)
-OLLAMA_BASE_URL=http://localhost:11434/
+OLLAMA_MODEL=llama3.2:3b
+# LangChain Ollama URL
+OLLAMA_BASE_URL=
+# LangFuse 設定
+LANGFUSE_ENABLED=true
+LANGFUSE_PUBLIC_KEY=
+LANGFUSE_SECRET_KEY=
+LANGFUSE_BASE_URL=http://localhost:3000
 ```
 
 裝好套件（專案資料夾裡）：
@@ -136,8 +141,13 @@ python run_local.py
 假設使用ollama需要切換主機：
 ```
 OLLAMA_HOST= <URL>   #指定 HOST
-ollama pull gpt-oss  #拉取
-ollama run gpt-oss   #測試
+ollama pull llama3.2:3b  #拉取
+ollama run llama3.2:3b   #測試
+```
+
+LangFuse docker-compose.yml 參考：
+```
+https://github.com/langfuse/langfuse/blob/main/docker-compose.yml
 ```
 
 ---
