@@ -30,6 +30,8 @@
 
 ## 🧠 Crypto AI Agent 架構圖
 
+### 初始版本：
+
 ```mermaid
 flowchart LR
     U["使用者 LINE 聊天"] -->|輸入指令：查 BTC 形勢| L["LINE Messaging API Bot"]
@@ -73,6 +75,76 @@ flowchart LR
   * 當使用者在 LINE 輸入「查 BTC 形勢」時才觸發運算 → 平時不佔資源
 
 > 🎯 目標：不是做高頻交易機器人，而是打造一個「**中長線現貨投資顧問型 AI Agent**」。
+
+### 更新 - 加入 LangGraph & Langfuse 框架版本：
+
+```mermaid
+flowchart LR
+    %% === Entry ===
+    A[使用者 / Cron<br/>python run_local.py] --> B[LangGraph StateGraph<br/>AgentState]
+
+    %% === LangGraph Pipeline ===
+    subgraph Pipeline["LangGraph Pipeline（Crypto Agent）"]
+        F[fetch_and_analyze<br/>Binance K 線 + 指標計算]
+        P[build_prompt<br/>build_prompt_for_llm]
+        L[call_llm<br/>LLMClient（Ollama / OpenAI）]
+        M[format_message<br/>format_line_message]
+
+        F --> P --> L --> M
+    end
+
+    B --> F
+    M --> OUT[最終訊息<br/>（給 LINE / Console 顯示）]
+
+    %% === LLM Backend ===
+    subgraph LLMBackend["LLM Backend"]
+        O[OllamaLLM<br/>model: llama3.2:3b<br/>ngrok OLLAMA_HOST]
+    end
+
+    L --> O
+
+    %% === Langfuse Observability ===
+    subgraph Langfuse["Langfuse（Tracing / Spans）"]
+        T[Trace<br/>crypto-agent.pipeline.SYMBOL]
+
+        S1[Span<br/>fetch_and_analyze]
+        S2[Span<br/>build_prompt]
+        S3[Span<br/>call_llm]
+        S4[Span<br/>format_message]
+
+        T --> S1 --> S2 --> S3 --> S4
+    end
+
+    %% LangGraph nodes <-> Langfuse spans（觀測）
+    F -. 建立 span .-> S1
+    P -. 建立 span .-> S2
+    L -. 建立 span .-> S3
+    M -. 建立 span .-> S4
+
+    %% === Langfuse infra (docker compose) ===
+    subgraph LangfuseStack["Langfuse Self-host Stack（docker-compose）"]
+        DB[(Postgres<br/>主資料庫)]
+        CK[(ClickHouse<br/>事件 / 向量資料)]
+        R[(Redis<br/>queue / cache)]
+        MIN[(Minio<br/>S3 物件儲存)]
+    end
+
+    Langfuse --- LangfuseStack
+```
+
+1. 在 Langfuse 的 **Tracing → Traces** 裡，
+   選對應專案與對應 trace name
+   
+2. 點進任一 trace：
+
+   * 左邊是「整條流程」的 timeline
+   * 中間選不同 span
+
+     * `fetch_and_analyze` 看 Binance 抓回來的 regime / pattern / summary
+     * `build_prompt` 看最後丟給 LLM 的 prompt
+     * `call_llm...` 看 LLM summary 原文
+     * `format_message` 看最後要送 LINE 的訊息
+
 
 ---
 
@@ -149,6 +221,31 @@ LangFuse docker-compose.yml 參考：
 ```
 https://github.com/langfuse/langfuse/blob/main/docker-compose.yml
 ```
+
+---
+
+## 🔍 Observability：使用 Langfuse 觀測整個 Agent Pipeline
+
+已經整合 [Langfuse](https://langfuse.com/) 做觀測與除錯，目前支援：
+
+- 以 **LangGraph pipeline** 為單位建立一條 Trace  
+- 在 Trace 底下建立節點級的 Spans：
+  - `fetch_and_analyze`（抓 Binance K 線 + 指標計算）
+  - `build_prompt`（組 prompt 給 LLM）
+  - `call_llm.*`（實際呼叫 LLM）
+  - `format_message`（組成最後要丟 LINE 的訊息）
+
+### 2.1 啟動本地 Langfuse
+
+在 `crypto_agent/langfuse-local` 執行：
+
+```bash
+docker compose up -d
+```
+
+- Langfuse Web UI：http://localhost:3000
+
+- Postgres / ClickHouse / Redis / Minio 皆在同一個 docker compose 中啟動
 
 ---
 

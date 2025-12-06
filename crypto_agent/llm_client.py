@@ -1,3 +1,4 @@
+# llm_client.py
 from typing import Optional
 
 from openai import OpenAI
@@ -18,9 +19,7 @@ class LLMClient:
     - openai  （官方 API）
     - ollama  （本地 / Colab OLLAMA_HOST）
 
-    注意：
-    - 這個 class 現在 **只負責呼叫 LLM**，不再直接呼叫 Langfuse。
-    - Langfuse 的觀測／tracing 統一在 graph_crypto_agent.py + observability.py 處理。
+    只由 graph_crypto_agent.py 的 pipeline trace 做觀測。
     """
 
     def __init__(self) -> None:
@@ -44,32 +43,31 @@ class LLMClient:
             print(f"[INFO] LLM backend = OpenAI ({OPENAI_MODEL})")
 
     # ----------------------------------------------------
-    # 封裝一個簡單的 summarize(prompt) 給上層使用
+    # 統一的 summarize() 入口
     # ----------------------------------------------------
     def summarize(self, prompt: str) -> str:
         """
-        統一入口：
         - backend = openai -> 呼叫 official OpenAI Chat Completions
         - backend = ollama -> 呼叫 LangChain OllamaLLM.invoke()
         """
         if self.backend == "ollama":
             if self.llm is None:
                 raise RuntimeError("Ollama LLM 尚未初始化")
-            # LangChain LLM 介面：直接用 invoke()
-            response_text = self.llm.invoke(prompt)
-        else:
-            if self.client is None:
-                raise RuntimeError("OpenAI client 尚未初始化")
-            resp = self.client.chat.completions.create(
-                model=OPENAI_MODEL,
-                messages=[
-                    {
-                        "role": "user",
-                        "content": prompt,
-                    }
-                ],
-                temperature=0.3,
-            )
-            response_text = resp.choices[0].message.content
+            return self.llm.invoke(prompt)
 
-        return response_text
+        # OpenAI backend
+        if self.client is None:
+            raise RuntimeError("OpenAI client 尚未初始化")
+
+        resp = self.client.chat.completions.create(
+            model=OPENAI_MODEL,
+            messages=[
+                {
+                    "role": "user",
+                    "content": prompt,
+                }
+            ],
+            temperature=0.3,
+        )
+        # 防守一下 None
+        return resp.choices[0].message.content or ""
