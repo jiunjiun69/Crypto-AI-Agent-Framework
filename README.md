@@ -212,7 +212,7 @@ python run_local.py
 
 假設使用ollama需要切換主機：
 ```
-OLLAMA_HOST= <URL>   #指定 HOST
+export OLLAMA_HOST=<URL>   #指定 HOST
 ollama pull llama3.2:3b  #拉取
 ollama run llama3.2:3b   #測試
 ```
