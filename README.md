@@ -145,6 +145,27 @@ flowchart LR
      * `call_llm...` 看 LLM summary 原文
      * `format_message` 看最後要送 LINE 的訊息
 
+---
+
+### 更新 - LINE Bot：
+
+```mermaid
+flowchart LR
+    subgraph LINE
+      A[使用者輸入文字<br/>("BTC投資建議")]
+      A -->|POST webhook| B[Webhook Server]
+    end
+
+    subgraph Backend
+      B --> C{解析文字}
+      C -->|是投資建議| D[提取 Symbol]
+      D --> E[執行 Crypto Agent Pipeline]
+      E --> F[取得分析結果]
+      F --> G[回覆 LINE 訊息]
+    end
+
+    G -->|Reply API| LINE
+```
 
 ---
 
@@ -221,6 +242,20 @@ LangFuse docker-compose.yml 參考：
 ```
 https://github.com/langfuse/langfuse/blob/main/docker-compose.yml
 ```
+
+Line Bot 本機測試 Webhook（ngrok）：
+```
+ngrok http 8000
+python -m uvicorn crypto_agent.main:app --reload --port 8000
+crypto_agent 根目錄下 python -m uvicorn main:app --reload --port 8000 
+```
+
+取到的網址假設是：
+```
+https://abcd1234.ngrok.io/webhook
+```
+
+把它貼到 LINE Developer Console 的 Webhook URL 欄位。
 
 ---
 
