@@ -152,7 +152,7 @@ flowchart LR
 ```mermaid
 flowchart LR
     subgraph LINE
-      A[使用者輸入文字<br/>("BTC投資建議")]
+      A[使用者輸入文字-->BTC投資建議]
       A -->|POST webhook| B[Webhook Server]
     end
 
