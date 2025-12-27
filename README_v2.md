@@ -63,7 +63,7 @@ flowchart LR
 
 ## Demo
 
-<img src="https://github.com/jiunjiun69/Crypto-AI-Agent-Framework/blob/main/img_v2/v2_Demo.gif" alt="v2_Demo" width="800"/>
+<img src="https://github.com/jiunjiun69/Crypto-AI-Agent-Framework/blob/main/img_v2/v2_Demo.gif" alt="v2_Demo" width="300"/>
 
 ---
 
