@@ -1,355 +1,417 @@
 """
+LangGraph orchestration + Langfuse observability.
+
 使用 LangGraph 將 Crypto AI Agent 的流程串成有狀態的 Graph。
 
 State: AgentState
 Nodes:
-  - fetch_and_analyze       (Data + Analysis Agent)
-  - build_prompt_node       (組 prompt)
-  - call_llm_node           (Advice Agent 呼叫 LLM)
-  - format_message_node     (Interface Agent：整理成 LINE 訊息)
-
-讓邏輯保留在既有的 modules 裡，只用 LangGraph 做 orchestration，
-並用 Langfuse 把整個 pipeline 的每一步都打進 trace/span。
+    - fetch_and_analyze span
+    - analyst_weekly span + generation
+    - analyst_daily span + generation
+    - analyst_risk span + generation
+    - manager_merge span
+    - format_message span
 """
 
-from typing import Dict, Any
-from typing_extensions import TypedDict
+from __future__ import annotations
 
-from langgraph.graph import StateGraph, START, END  # 核心 API
+import datetime as dt
+import json
+import re
+from typing import Any, Dict, List, Optional, TypedDict
+
+import pandas as pd
+
+from langgraph.graph import StateGraph, START, END
 
 from config import SYMBOL
 from data_binance import get_daily_klines, get_weekly_klines
 from indicators import compute_weekly_regime, analyze_daily_volume_price
+from llm_client import chat_json
+from observability import SpanCtx, GenCtx, safe_preview
 from line_formatter import build_prompt_for_llm, format_line_message
-from llm_client import LLMClient
-from observability import langfuse
 
+# ----------------------------
+# Intent Parsing
+# ----------------------------
+# Possible intents:
+# (from user_text)
+# ----------------------------
+# 1) general_advice（一般建議）
+# 2) bottom_fishing（抄底）
+# 3) risk_averse（怕回撤 / 保守）
+# 4) take_profit（想賣出 / 獲利了結）
+# 5) heavy_position（重倉 / 加倉）
+# ----------------------------
 
-# =========================
-# 1. 定義 Graph 的 State Schema
-# =========================
-class AgentState(TypedDict, total=False):
-    """
-    LangGraph 在節點之間傳遞的狀態。
-    """
-    symbol: str
+def _parse_intent(user_text: str) -> str:
+    text = user_text.lower()
 
-    # Analysis Agent 輸出
-    weekly_regime: str
-    weekly_row: Dict[str, float]
-    daily_pattern: Dict[str, Any]
+    if "抄底" in text or "底部" in text:
+        return "bottom_fishing"
+    if "怕回撤" in text or "怕回落" in text or "怕跌" in text:
+        return "risk_averse"
+    if "賣出" in text or "停利" in text or "想賣" in text:
+        return "take_profit"
+    if "重倉" in text or "加倉" in text or "多" in text:
+        # avoid matching “做多” for general sentiment
+        # so only heavy if explicitly 重倉/加倉
+        return "heavy_position"
+    # fallback general
+    return "general_advice"
 
-    # Advice Agent / Interface Agent 用
-    prompt: str
+INTENT_WEIGHTS = {
+    "general_advice": {"weekly": 1.0, "daily": 1.0, "risk": 1.0},
+    "bottom_fishing": {"weekly": 0.5, "daily": 1.5, "risk": 1.0},
+    "risk_averse": {"weekly": 0.5, "daily": 1.0, "risk": 1.5},
+    "take_profit": {"weekly": 1.0, "daily": 0.8, "risk": 1.4},
+    "heavy_position": {"weekly": 1.0, "daily": 1.2, "risk": 0.8},
+}
+
+# ----------------------------
+# State Schema
+# ----------------------------
+
+class AnalystResult(TypedDict, total=False):
+    ok: bool
+    focus: str
     summary: str
+    decision: str
+    notes: str
+    missing: List[str]
+
+
+class AgentState(TypedDict, total=False):
+    symbol: str
+    user_text: str
+    ts: str
+    intent: str
+
+    # analysis outputs
+    weekly_row: Dict[str, float]
+    weekly_regime: str
+    daily_pattern: Dict[str, Any]
+    daily_candles: List[Dict[str, Any]]
+
+    # multi-analyst results
+    analyst_weekly: AnalystResult
+    analyst_daily: AnalystResult
+    analyst_risk: AnalystResult
+
+    # final
+    final_decision: Dict[str, Any]
     message: str
+    summary: str
 
 
-# =========================
-# 2. 定義各個 Node（節點）
-# =========================
 
-def _fetch_and_analyze_core(symbol: str):
-    """
-    把 fetch_and_analyze 的核心邏輯抽出來，方便在有 / 沒有 Langfuse span 時共用。
-    """
-    df_daily = get_daily_klines(symbol)
-    df_weekly = get_weekly_klines(symbol)
+# ----------------------------
+# Helpers
+# ----------------------------
 
-    # 這裡拿到的是：regime, df_with_sma
-    weekly_regime, df_weekly_with_sma = compute_weekly_regime(df_weekly)
+def _serialize_candles(df: pd.DataFrame, n: int) -> List[Dict[str, Any]]:
+    df2 = df.sort_values("close_time").tail(n).copy()
+    df2["date"] = df2["close_time"].dt.strftime("%Y-%m-%d")
+    out: List[Dict[str, Any]] = []
+    for _, r in df2.iterrows():
+        out.append(
+            {
+                "date": str(r["date"]),
+                "open": float(r["open"]),
+                "high": float(r["high"]),
+                "low": float(r["low"]),
+                "close": float(r["close"]),
+                "volume": float(r["volume"]),
+            }
+        )
+    return out
 
-    # 取最新一列，並轉成純 dict（裡面是標量）
-    df_weekly_sorted = df_weekly_with_sma.sort_values("close_time")
-    last = df_weekly_sorted.iloc[-1]
 
-    weekly_row = {
-        "close": float(last["close"]),
-        "sma50": float(last["sma50"]),
-        "sma100": float(last["sma100"]),
-    }
+# ----------------------------
+# Prompt Schemas
+# ----------------------------
 
-    # 日線量價分析（analyze_daily_volume_price）
-    daily_pattern = analyze_daily_volume_price(df_daily)
+BASE_PROMPT_TEMPLATE = """
+[使用者提問]
+{user_text}
 
-    return weekly_regime, weekly_row, daily_pattern
+[交易標的]
+{symbol}
 
+[週線資訊]
+- regime: {weekly_regime}
+- close: {close}
+- sma50: {sma50}
+- sma100: {sma100}
+
+[日線概況]
+- close_dir: {close_dir}
+- vol_ratio: {vol_ratio}
+
+[日線 candles (近 35 天)]
+{daily_candles}
+
+{special_instructions}
+""".strip()
+
+
+ANALYST_TEMPLATES = {
+    "weekly": """
+你是{role}。
+請依週線資訊做判斷，請回傳嚴格 JSON：
+{{
+  "ok": true/false,
+  "focus": "weekly",
+  "decision": "...(buy/hold/sell)...",
+  "summary": "...",
+  "confidence": "...(high/medium/low)...",
+  "key_levels": {{"support":"...", "resistance":"..."}},
+  "notes": "...",
+  "missing": []
+}}
+""".strip(),
+    "daily": """
+你是{role}。
+請依日線量價與 candles 做判斷，只回傳 JSON：
+{{
+  "ok": true/false,
+  "focus": "daily",
+  "decision": "...",
+  "summary": "...",
+  "confidence": "...(high/medium/low)...",
+  "key_levels": {{"support":"...", "resistance":"..."}},
+  "notes": "...",
+  "missing": []
+}}
+""".strip(),
+    "risk": """
+你是{role}。
+請結合使用者提問與市場資訊提出風險控管 + 倉位 plan，只回傳 JSON：
+{{
+  "ok": true/false,
+  "focus": "risk",
+  "decision": "...",
+  "summary": "...",
+  "confidence": "...(high/medium/low)...",
+  "key_levels": {{"support":"...", "resistance":"..."}},
+  "notes": "...",
+  "missing": []
+}}
+""".strip(),
+}
+
+
+# ----------------------------
+# Nodes
+# ----------------------------
 
 def fetch_and_analyze(state: AgentState) -> AgentState:
-    """
-    Data Agent + Analysis Agent：
-    - 從 Binance 抓週線、日線 K 線
-    - 計算週線 Regime（牛/熊/警戒/中性）
-    - 計算日線量價 pattern
-
-    並用 Langfuse 記一個 span：fetch_and_analyze
-    """
     symbol = state.get("symbol") or SYMBOL
+    user_text = state.get("user_text") or ""
+    ts = state.get("ts") or dt.datetime.now().isoformat()
+    intent = state.get("intent") or user_text
 
-    # 有 / 沒有 Langfuse 都要能跑，所以用 try 包起來
-    if langfuse is not None:
+    with SpanCtx("fetch_and_analyze", {"symbol": symbol, "user_text": user_text, "intent": intent, "ts": ts}) as span:
+        df_daily = get_daily_klines(symbol, limit=220)
+        df_weekly = get_weekly_klines(symbol, limit=220)
+
+        regime, dfw = compute_weekly_regime(df_weekly)
+        daily_pattern = analyze_daily_volume_price(df_daily)
+        daily_candles = _serialize_candles(df_daily, 35)
+
+        out = {
+            "symbol": symbol,
+            "user_text": user_text,
+            "ts": ts,
+            "intent": intent,
+            "weekly_regime": regime,
+            "weekly_row": {
+                "close": dfw.iloc[-1]["close"],
+                "sma50": dfw.iloc[-1]["sma50"],
+                "sma100": dfw.iloc[-1]["sma100"],
+            },
+            "daily_pattern": daily_pattern,
+            "daily_candles": daily_candles,
+        }
+
+        span.update(output={"weekly_regime": regime, "daily_pattern": daily_pattern})
+        return out
+
+
+def _run_analyst(prompt: str, name: str) -> AnalystResult:
+    """
+    Runs one analyst with trace:
+    - SpanCtx for the overall analyst
+    - GenCtx for the LLM invocation
+    """
+
+    result: AnalystResult = {}
+    with SpanCtx(name, {"prompt_preview": safe_preview(prompt, 1200)}) as span:
         try:
-            # 這裡使用官方推薦的 API：start_as_current_observation
-            # as_type="span" 代表這個 observation 是一個 span
-            with langfuse.start_as_current_observation(
-                as_type="span",
-                name="fetch_and_analyze",
-            ) as obs:
-                # span input：這一步的輸入大致是 symbol
-                obs.update(input={"symbol": symbol})
+            # generation span
+            with GenCtx(f"{name}.llm", {"prompt_preview": safe_preview(prompt, 2000)}) as gen:
+                raw = chat_json(prompt)
+                # attach raw to gen span
+                gen.update(output={"raw_preview": safe_preview(raw, 1200)})
 
-                weekly_regime, weekly_row, daily_pattern = _fetch_and_analyze_core(symbol)
+            # if raw is dict-like or str
+            result = raw if isinstance(raw, dict) else {}
 
-                # span output：把分析結果精簡記錄
-                obs.update(
-                    output={
-                        "weekly_regime": weekly_regime,
-                        "weekly_row": weekly_row,
-                        "daily_pattern": {
-                            "status": daily_pattern.get("status"),
-                            "pattern": daily_pattern.get("pattern"),
-                            "vol_state": daily_pattern.get("vol_state"),
-                        },
-                    }
-                )
+            # attach result to span
+            span.update(output={"result_preview": safe_preview(raw, 1200)})
         except Exception as e:
-            print("[WARN] Langfuse span(fetch_and_analyze) 失敗（略過）：", repr(e))
-            weekly_regime, weekly_row, daily_pattern = _fetch_and_analyze_core(symbol)
-    else:
-        weekly_regime, weekly_row, daily_pattern = _fetch_and_analyze_core(symbol)
+            # if error, log to span metadata
+            span.update(
+                output={"error": f"{type(e).__name__}: {str(e)[:200]}"},
+                metadata={"status": "error"},
+            )
+            result = {"ok": False, "error": str(e)}
 
-    # 把結果塞回 state
-    state["symbol"] = symbol
-    state["weekly_regime"] = weekly_regime
-    state["weekly_row"] = weekly_row
-    state["daily_pattern"] = daily_pattern
-    return state
+    return result
 
 
-def build_prompt_node(state: AgentState) -> AgentState:
-    """
-    將分析結果包成給 LLM 的 prompt。
-    也在 Langfuse 中記一個 span：build_prompt
-    """
+
+def multi_analyst_node(state: AgentState) -> AgentState:
     symbol = state["symbol"]
+    user_text = state["user_text"]
     weekly_regime = state["weekly_regime"]
     weekly_row = state["weekly_row"]
     daily_pattern = state["daily_pattern"]
+    daily_candles = state["daily_candles"]
 
-    def _core() -> str:
-        return build_prompt_for_llm(
-            symbol=symbol,
-            weekly_regime=weekly_regime,
-            weekly_row=weekly_row,
-            daily_pattern=daily_pattern,
-        )
+    base_ctx = BASE_PROMPT_TEMPLATE.format(
+        user_text=user_text,
+        symbol=symbol,
+        weekly_regime=weekly_regime,
+        close=weekly_row["close"],
+        sma50=weekly_row["sma50"],
+        sma100=weekly_row["sma100"],
+        close_dir=daily_pattern.get("close_dir"),
+        vol_ratio=daily_pattern.get("vol_ratio"),
+        daily_candles=json.dumps(daily_candles, ensure_ascii=False),
+        special_instructions=f"使用者意圖: {state.get('intent')}。請特別根據此意圖給出判斷重點。"
+    )
 
-    if langfuse is not None:
-        try:
-            with langfuse.start_as_current_observation(
-                as_type="span",
-                name="build_prompt",
-            ) as obs:
-                obs.update(
-                    input={
-                        "symbol": symbol,
-                        "weekly_regime": weekly_regime,
-                        "weekly_row": weekly_row,
-                        "daily_pattern_brief": {
-                            "status": daily_pattern.get("status"),
-                            "pattern": daily_pattern.get("pattern"),
-                        },
-                    }
-                )
-                prompt = _core()
-                obs.update(
-                    output={
-                        # 為了避免太長，只存 preview
-                        "prompt_preview": prompt[:400],
-                    }
-                )
-        except Exception as e:
-            print("[WARN] Langfuse span(build_prompt) 失敗（略過）：", repr(e))
-            prompt = _core()
-    else:
-        prompt = _core()
+    analysts = {}
 
-    state["prompt"] = prompt
+    analysts["analyst_weekly"] = _run_analyst(
+        ANALYST_TEMPLATES["weekly"].format(role="週線趨勢分析師") + "\n\n" + base_ctx,
+        "analyst_weekly",
+    )
+
+    analysts["analyst_daily"] = _run_analyst(
+        ANALYST_TEMPLATES["daily"].format(role="日線量價分析師") + "\n\n" + base_ctx,
+        "analyst_daily",
+    )
+
+    analysts["analyst_risk"] = _run_analyst(
+        ANALYST_TEMPLATES["risk"].format(role="風險控管分析師") + "\n\n" + base_ctx,
+        "analyst_risk",
+    )
+
+    state.update(analysts)
     return state
 
 
-def call_llm_node(state: AgentState) -> AgentState:
-    """
-    Advice Agent：
-    - 用 LLM 讀取 prompt，吐出 summary（文字建議）
-    - 在 Langfuse 打一個 span：call_llm
-      （注意：llm_client.py 裡面原本自訂的 trace 也會存在，等於是雙層觀測）
-    """
-    symbol = state["symbol"]
-    weekly_regime = state["weekly_regime"]
-    prompt = state["prompt"]
+def manager_merge_node(state: AgentState) -> AgentState:
+    intent = state.get("intent", "general_advice")
+    weights = INTENT_WEIGHTS.get(intent, INTENT_WEIGHTS["general_advice"])
 
-    llm = LLMClient()
+    with SpanCtx(
+        "manager_merge",
+        { "intent": intent, "weights": weights },
+    ) as span:
 
-    def _core() -> str:
-        return llm.summarize(prompt)
+        results: List[AnalystResult] = [
+            state.get("analyst_weekly", {}),
+            state.get("analyst_daily", {}),
+            state.get("analyst_risk", {}),
+        ]
 
-    if langfuse is not None:
-        try:
-            with langfuse.start_as_current_observation(
-                as_type="span",
-                name=f"call_llm.{symbol}.{weekly_regime}",
-            ) as obs:
-                obs.update(
-                    input={
-                        "symbol": symbol,
-                        "weekly_regime": weekly_regime,
-                        "prompt_preview": prompt[:400],
-                    }
-                )
-                summary = _core()
-                obs.update(
-                    output={
-                        "summary_preview": summary[:400],
-                    }
-                )
-        except Exception as e:
-            print("[WARN] Langfuse span(call_llm) 失敗（略過）：", repr(e))
-            summary = _core()
-    else:
-        summary = _core()
+        # only ok
+        valid = [r for r in results if isinstance(r, dict) and r.get("ok")]
 
-    state["summary"] = summary
+        if not valid:
+            summary = "市場資訊不足或模型解析失敗，請再試一次。"
+            state["final_decision"] = {
+                "final_decision": "hold",
+                "summary": summary,
+                "risk": ["無有效分析師輸出"],
+            }
+            span.update(output={"final_decision": state["final_decision"]})
+            return state
+
+        score = {"buy": 0.0, "hold": 0.0, "sell": 0.0}
+
+        for role_name, r in zip(["weekly", "daily", "risk"], valid):
+            d = r.get("decision")
+            if d in score:
+                score[d] += weights.get(role_name, 1.0)
+
+        final_decision = max(score, key=lambda k: score[k])
+
+        # summary + risk
+        summary = "；".join([r.get("summary", "") for r in valid if r.get("summary")])
+        risk_list = []
+        for r in valid:
+            notes = r.get("notes")
+            if notes:
+                risk_list.extend(notes if isinstance(notes, list) else [notes])
+
+        state["final_decision"] = {
+            "final_decision": final_decision,
+            "summary": summary,
+            "risk": risk_list[:3],
+        }
+
+        span.update(output={"final_decision": state["final_decision"]})
+
     return state
 
 
 def format_message_node(state: AgentState) -> AgentState:
-    """
-    Interface Agent：把 LLM 回覆包裝成適合 LINE 顯示的訊息。
-    同樣記一個 span：format_message
-    """
-    symbol = state["symbol"]
-    summary = state["summary"]
+    final = state["final_decision"]
+    msg = format_line_message(state["symbol"], final)
+    return {"message": msg}
 
-    def _core() -> str:
-        return format_line_message(symbol, summary)
-
-    if langfuse is not None:
-        try:
-            with langfuse.start_as_current_observation(
-                as_type="span",
-                name="format_message",
-            ) as obs:
-                obs.update(
-                    input={
-                        "symbol": symbol,
-                        "summary_preview": summary[:400],
-                    }
-                )
-                msg = _core()
-                obs.update(
-                    output={
-                        "message_preview": msg[:400],
-                    }
-                )
-        except Exception as e:
-            print("[WARN] Langfuse span(format_message) 失敗（略過）：", repr(e))
-            msg = _core()
-    else:
-        msg = _core()
-
-    state["message"] = msg
-    return state
-
-
-# =========================
-# 3. 建立 LangGraph 的 StateGraph
-# =========================
 
 def build_graph():
-    """
-    建一條：
-      START → fetch_and_analyze → build_prompt_node → call_llm_node → format_message_node → END
-    的有狀態 Graph。
-    """
     builder = StateGraph(AgentState)
 
-    # 加節點
     builder.add_node("fetch_and_analyze", fetch_and_analyze)
-    builder.add_node("build_prompt", build_prompt_node)
-    builder.add_node("call_llm", call_llm_node)
+    builder.add_node("multi_analyst", multi_analyst_node)
+    builder.add_node("manager_merge", manager_merge_node)
     builder.add_node("format_message", format_message_node)
 
-    # 定義邊（流程）
     builder.add_edge(START, "fetch_and_analyze")
-    builder.add_edge("fetch_and_analyze", "build_prompt")
-    builder.add_edge("build_prompt", "call_llm")
-    builder.add_edge("call_llm", "format_message")
+    builder.add_edge("fetch_and_analyze", "multi_analyst")
+    builder.add_edge("multi_analyst", "manager_merge")
+    builder.add_edge("manager_merge", "format_message")
     builder.add_edge("format_message", END)
 
-    graph = builder.compile()
-    return graph
+    return builder.compile()
 
 
-def run_with_graph(symbol: str | None = None) -> str:
-    """
-    對外的簡單 API：
-    - 丟進 symbol
-    - 走 LangGraph 流程
-    - 回傳最後的 message（可直接給 LINE 用）
+def run_with_graph(symbol: str, user_text: str | None = None) -> str:
+    symbol = symbol.upper()
+    user_text = user_text or f"{symbol} 投資建議"
+    ts = dt.datetime.now().isoformat()
+    intent = _parse_intent(user_text)
 
-    如果有 Langfuse client，就用一個「根 span」把整條 pipeline 包起來，
-    並且把 trace 的 input / output 也補齊。
-    """
-    import datetime as dt
+    with SpanCtx(
+        "crypto_agent.run",
+        {"symbol": symbol, "intent": intent, "ts": ts},
+    ) as root:
 
-    symbol = symbol or SYMBOL
-    graph = build_graph()
-
-    # 沒有 Langfuse：直接跑
-    if langfuse is None:
-        final_state: AgentState = graph.invoke({"symbol": symbol})
-        return final_state["message"]
-
-    # 有 Langfuse：用 start_as_current_observation 當 root span
-    with langfuse.start_as_current_observation(
-        as_type="span",
-        name=f"crypto-agent.pipeline.{symbol}",
-    ) as root_span:
-        # 這裡更新 trace 的 input
-        try:
-            root_span.update_trace(
-                input={
-                    "symbol": symbol,
-                    "started_at": dt.datetime.now().isoformat(),
-                }
-            )
-        except Exception as e:
-            print("[WARN] Langfuse root_span.update_trace(input) 失敗：", repr(e))
-
-        # 真正執行 LangGraph
-        final_state: AgentState = graph.invoke({"symbol": symbol})
-
-        # 把整條 pipeline 的最終輸出塞回 trace output
-        try:
-            root_span.update_trace(
-                output={
-                    "symbol": symbol,
-                    "weekly_regime": final_state.get("weekly_regime"),
-                    "message": final_state.get("message", ""),
-                }
-            )
-        except Exception as e:
-            print("[WARN] Langfuse root_span.update_trace(output) 失敗：", repr(e))
+        graph = build_graph()
+        final_state: AgentState = graph.invoke(
+            {
+                "symbol": symbol,
+                "user_text": user_text,
+                "intent": intent,
+                "ts": ts,
+            }
+        )
+        root.update(output={"final_message": final_state.get("message", "")})
 
     return final_state["message"]
-
-
-if __name__ == "__main__":
-    import datetime as dt
-
-    print(f"[INFO] Start LangGraph analysis at {dt.datetime.now()}")
-    msg = run_with_graph()
-    print("\n===== 最終訊息預覽（LangGraph 版本）=====\n")
-    print(msg)
-    print("\n========================================\n")

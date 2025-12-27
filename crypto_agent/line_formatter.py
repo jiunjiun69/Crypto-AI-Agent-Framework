@@ -1,76 +1,69 @@
-from typing import Dict
+from __future__ import annotations
+from typing import Any, Dict, List, Optional
+import json
 
 
 def build_prompt_for_llm(
     symbol: str,
     weekly_regime: str,
-    weekly_row: Dict,
-    daily_pattern: Dict,
+    weekly_row: Dict[str, float],
+    daily_pattern: Dict[str, Any],
+    daily_candles: Optional[List[Dict[str, Any]]] = None,
 ) -> str:
-    regime_zh = {
-        "bull": "牛市",
-        "bear": "熊市",
-        "warning": "警戒區（可能由牛轉熊或震盪）",
-        "neutral": "中性／盤整",
-        "unknown": "資料不足，暫時無法判定",
-    }.get(weekly_regime, weekly_regime)
+    candles_txt = ""
+    if daily_candles:
+        rows = []
+        for c in daily_candles[-14:]:
+            rows.append(
+                f"{c['date']} O:{c['open']} H:{c['high']} L:{c['low']} C:{c['close']} V:{c['volume']}"
+            )
+        candles_txt = "\n".join(rows)
 
-    weekly_block = f"""
-[週線級別]
-- 最新一週收盤價：{weekly_row['close']:.2f}
-- 週線 SMA50：{weekly_row['sma50']:.2f}
-- 週線 SMA100：{weekly_row['sma100']:.2f}
-- 週期判定：{regime_zh}
-"""
+    return f"""
+【交易對】{symbol}
 
-    # --- 日線量價區塊 ---
-    if daily_pattern.get("status") == "ok":
-        dp = daily_pattern
-        price_dir_zh = (
-            "上漲"
-            if dp.get("price_dir") == "up"
-            else "下跌"
-            if dp.get("price_dir") == "down"
-            else "持平"
-        )
-        lookback = dp.get("lookback", dp.get("window", 20))
+【週線趨勢】{weekly_regime}
+- close={weekly_row.get('close')}
+- sma50={weekly_row.get('sma50')}
+- sma100={weekly_row.get('sma100')}
 
-        daily_block = f"""
-[日線量價]
-- 昨日收盤價：{dp['close_prev']:.2f}
-- 今日收盤價：{dp['close_last']:.2f}
-- 價格方向：{price_dir_zh}
-- 今日成交量：{dp['vol_last']:.0f}
-- 最近 {lookback} 日平均量：約 {dp['avg_vol']:.0f}
-- 量能狀態：{dp['vol_state']}（{dp['pattern']}）
-"""
-    else:
-        daily_block = """
-[日線量價]
-- 資料天數不足，暫不分析。
-"""
+【日線量價型態】
+{json.dumps(daily_pattern, ensure_ascii=False)}
 
-    # --- 給 LLM 的完整提示詞 ---
-    prompt = f"""
-你是一位偏保守、以風險控管為主的現貨加密貨幣顧問，幫使用者看 BTC 中長期形勢。
-
-標的：{symbol}
-
-{weekly_block}
-
-{daily_block}
-
-請用繁體中文，條列 3~5 點說明：
-1. 目前屬於偏牛、偏熊或高風險警戒區？整體趨勢怎麼看？
-2. 週線趨勢（牛/熊/警戒）與今日量價型態（例如放量下跌、縮量上漲）綜合起來，有什麼需要注意的？
-3. 對於「現貨重倉」且不使用槓桿的投資人，現在比較像是：減倉、續抱觀望、還是可以分批佈局？請給出方向但不要給具體價格或 All in 建議。
-4. 提醒 1~2 個可能的風險情境（例如之後如果跌破某種均線、或量能持續放大下跌要留意什麼）。
-
-請避免精準預測價格，也不要建議槓桿與合約，專注在風險控管與節奏建議。
-"""
-
-    return prompt
+【最近 14 根日線（daily_candles）】
+{candles_txt}
+""".strip()
 
 
-def format_line_message(symbol: str, llm_text: str) -> str:
-    return f"【{symbol} 形勢分析（AI Agent）】\n\n{llm_text}"
+def format_line_message(symbol: str, result: Any) -> str:
+    header = f"【{symbol} 形勢分析（AI Agent）】\n"
+
+    if isinstance(result, dict):
+        decision = result.get("final_decision", "").upper()
+        summary = result.get("summary", "")
+        plan = result.get("plan", "")
+        risk = result.get("risk", [])
+
+        lines = [header]
+        if decision:
+            lines.append(f"✅ 結論：{decision}\n")
+
+        if summary:
+            lines.append("🧠 重點摘要：")
+            lines.append(summary.strip())
+            lines.append("")
+
+        if plan:
+            lines.append("📌 操作建議：")
+            lines.append(plan.strip())
+            lines.append("")
+
+        if isinstance(risk, list) and risk:
+            lines.append("⚠️ 風險提醒：")
+            for r in risk[:3]:
+                lines.append(f"- {str(r).strip()}")
+
+        return "\n".join(lines).strip()
+
+    # fallback：result 是純文字
+    return (header + "\n" + str(result)).strip()

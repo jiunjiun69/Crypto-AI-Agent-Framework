@@ -169,6 +169,54 @@ flowchart LR
 
 ---
 
+### 更新 - 最終版系統整體（LINE → FastAPI → LangGraph → Ollama → Langfuse → 回覆 LINE）:
+
+```mermaid
+flowchart LR
+  U[LINE 使用者
+  輸入：BTC投資建議] --> L[LINE Platform]
+  L -->|Webhook| A[FastAPI /webhook
+  crypto_agent.main]
+
+  A -->|run_with_graph：symbol,intent| G[LangGraph StateGraph
+  crypto_agent.graph_crypto_agent]
+
+  subgraph G[LangGraph Pipeline（同一條 Trace）]
+    S0((START)) --> N1[fetch_and_analyze
+    抓K線/算signals]
+    N1 --> N2[manager_plan
+    選擇分析師集合]
+    N2 --> T[analyst.trend
+    LLM+signals→JSON]
+    T --> VP[analyst.volume_price
+    LLM+signals→JSON]
+    VP --> R[analyst.risk
+    LLM+signals→JSON]
+    R --> AL[analyst.allocator
+    LLM+signals→JSON]
+    AL --> M[manager_gate
+    驗證schema/信心門檻
+    必要時要求重跑]
+    M -->|pass| FS[final_summarize
+    投資經理統整 LLM]
+    M -->|retry| RT[bump_retry
+    回饋/重跑指定分析師]
+    RT --> T
+    FS --> FM[format_message
+    整理成LINE訊息]
+    FM --> E0((END))
+  end
+
+  G --> O[Ollama LLM
+ngrok / local]
+  G --> F[Langfuse
+  Traces/Spans/Inputs/Outputs]
+
+  A -->|reply_message| L --> U
+```
+
+---
+
 ## 🗂 Crypto AI Agent 專案結構
 
 ```text

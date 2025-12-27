@@ -1,49 +1,92 @@
-from binance.client import Client
+from __future__ import annotations
+
+from typing import Literal
+
 import pandas as pd
-from typing import Optional
-from config import BINANCE_API_KEY, BINANCE_API_SECRET, SYMBOL
+import requests
 
 
-def _create_client() -> Client:
-    api_key = BINANCE_API_KEY or None
-    api_secret = BINANCE_API_SECRET or None
-    return Client(api_key=api_key, api_secret=api_secret)
+BINANCE_SPOT_KLINES_URL = "https://api.binance.com/api/v3/klines"
 
 
-def get_klines(
-    symbol: Optional[str] = None,
-    interval: str = "1d",
-    limit: int = 500,
+def _get_klines(
+    symbol: str,
+    interval: Literal[
+        "1m",
+        "3m",
+        "5m",
+        "15m",
+        "30m",
+        "1h",
+        "2h",
+        "4h",
+        "6h",
+        "8h",
+        "12h",
+        "1d",
+        "3d",
+        "1w",
+        "1M",
+    ],
+    limit: int,
 ) -> pd.DataFrame:
     """
-    從 Binance 抓 K 線資料，轉成 DataFrame.
+    Fetch klines from Binance public spot endpoint (no API key needed).
+
+    Response format:
+    [
+      [
+        0 open time,
+        1 open,
+        2 high,
+        3 low,
+        4 close,
+        5 volume,
+        6 close time,
+        7 quote asset volume,
+        8 number of trades,
+        9 taker buy base asset volume,
+        10 taker buy quote asset volume,
+        11 ignore
+      ],
+      ...
+    ]
     """
-    symbol = symbol or SYMBOL
-    client = _create_client()
-    klines = client.get_klines(symbol=symbol, interval=interval, limit=limit)
+    symbol = symbol.upper().strip()
+    params = {"symbol": symbol, "interval": interval, "limit": int(limit)}
+    r = requests.get(BINANCE_SPOT_KLINES_URL, params=params, timeout=30)
+    r.raise_for_status()
+    rows = r.json()
 
-    df = pd.DataFrame(
-        klines,
-        columns=[
-            "open_time", "open", "high", "low", "close", "volume",
-            "close_time", "qav", "num_trades",
-            "taker_base_vol", "taker_quote_vol", "ignore",
-        ],
-    )
+    cols = [
+        "open_time",
+        "open",
+        "high",
+        "low",
+        "close",
+        "volume",
+        "close_time",
+        "quote_asset_volume",
+        "number_of_trades",
+        "taker_buy_base_asset_volume",
+        "taker_buy_quote_asset_volume",
+        "ignore",
+    ]
+    df = pd.DataFrame(rows, columns=cols)
 
-    # 型別轉換
-    for col in ["open", "high", "low", "close", "volume"]:
-        df[col] = df[col].astype(float)
+    # types
+    df["open_time"] = pd.to_datetime(df["open_time"], unit="ms", utc=True)
+    df["close_time"] = pd.to_datetime(df["close_time"], unit="ms", utc=True)
 
-    df["open_time"] = pd.to_datetime(df["open_time"], unit="ms")
-    df["close_time"] = pd.to_datetime(df["close_time"], unit="ms")
+    for c in ["open", "high", "low", "close", "volume"]:
+        df[c] = pd.to_numeric(df[c], errors="coerce")
 
     return df
 
 
-def get_daily_klines(symbol: Optional[str] = None, limit: int = 400) -> pd.DataFrame:
-    return get_klines(symbol=symbol, interval="1d", limit=limit)
+def get_daily_klines(symbol: str, limit: int = 200) -> pd.DataFrame:
+    return _get_klines(symbol, "1d", limit)
 
 
-def get_weekly_klines(symbol: Optional[str] = None, limit: int = 200) -> pd.DataFrame:
-    return get_klines(symbol=symbol, interval="1w", limit=limit)
+def get_weekly_klines(symbol: str, limit: int = 200) -> pd.DataFrame:
+    return _get_klines(symbol, "1w", limit)
