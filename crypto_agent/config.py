@@ -20,7 +20,7 @@ LANGFUSE_ENABLED = os.getenv("LANGFUSE_ENABLED", "false").lower() == "true"
 LANGFUSE_PUBLIC_KEY = os.getenv("LANGFUSE_PUBLIC_KEY", "")
 LANGFUSE_SECRET_KEY = os.getenv("LANGFUSE_SECRET_KEY", "")
 
-# 你 env 是 LANGFUSE_BASE_URL（本地 self-host 常用）
+# env 是 LANGFUSE_BASE_URL（本地 self-host 用）
 LANGFUSE_BASE_URL = os.getenv("LANGFUSE_BASE_URL", "http://localhost:3000")
 # alias，避免舊程式碼用 LANGFUSE_HOST 讀不到
 LANGFUSE_HOST = os.getenv("LANGFUSE_HOST", LANGFUSE_BASE_URL)
