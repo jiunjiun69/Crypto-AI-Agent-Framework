@@ -32,6 +32,8 @@
 
 ### 初始版本：
 
+>（LINE → FastAPI → LangChain → Ollama → 回覆 LINE）
+
 ```mermaid
 flowchart LR
     U["使用者 LINE 聊天"] -->|輸入指令：查 BTC 形勢| L["LINE Messaging API Bot"]
@@ -76,165 +78,112 @@ flowchart LR
 
 > 🎯 目標：不是做高頻交易機器人，而是打造一個「**中長線現貨投資顧問型 AI Agent**」。
 
-### 更新 - 加入 LangGraph & Langfuse 框架版本：
+---
+
+### 更新 - 加入 LangGraph & Langfuse 框架版本 :
+>（LINE → FastAPI → LangGraph → Ollama → Langfuse → 回覆 LINE）
 
 ```mermaid
 flowchart LR
-    %% === Entry ===
-    A[使用者 / Cron<br/>python run_local.py] --> B[LangGraph StateGraph<br/>AgentState]
+    %% 使用者入口
+    U[LINE 使用者 / CLI] --> L[LINE Platform]
+    L -->|Webhook| A[FastAPI / webhook
+    crypto_agent.main]
 
-    %% === LangGraph Pipeline ===
-    subgraph Pipeline["LangGraph Pipeline（Crypto Agent）"]
-        F[fetch_and_analyze<br/>Binance K 線 + 指標計算]
-        P[build_prompt<br/>build_prompt_for_llm]
-        L[call_llm<br/>LLMClient（Ollama / OpenAI）]
-        M[format_message<br/>format_line_message]
+    %% 啟動 LangGraph
+    A -->|run_with_graph
+    symbol, intent| G[LangGraph StateGraph
+    crypto_agent.graph_crypto_agent]
 
-        F --> P --> L --> M
+    %% LangGraph Pipeline
+    subgraph G["LangGraph Pipeline（單一 Trace）"]
+        S0((START))
+
+        %% 市場資料
+        S0 --> F[fetch_and_analyze
+        抓 K 線 / 計算 signals]
+
+        %% 三位分析師並行
+        F --> W[analyst_weekly
+        週線趨勢分析師
+        LLM + signals → JSON]
+
+        F --> D[analyst_daily
+        日線量價型態分析師
+        LLM + signals → JSON]
+
+        F --> RSK[analyst_risk
+        風險 / 倉位控管分析師
+        LLM + signals → JSON]
+
+        %% 投資經理彙整
+        W --> M[manager_merge
+        加權 / 共識整合]
+        D --> M
+        RSK --> M
+
+        %% 最終輸出
+        M --> FS[final_summarize
+        投資經理觀點
+        LLM]
+
+        FS --> FM[format_message
+        轉為 LINE 訊息]
+
+        FM --> E0((END))
     end
 
-    B --> F
-    M --> OUT[最終訊息<br/>（給 LINE / Console 顯示）]
+    %% 外部服務
+    G --> LLM[(Ollama / OpenAI / vLLM / OpenRouter)]
+    G --> FUSE[Langfuse
+    Traces / Spans]
 
-    %% === LLM Backend ===
-    subgraph LLMBackend["LLM Backend"]
-        O[OllamaLLM<br/>model: llama3.2:3b<br/>ngrok OLLAMA_HOST]
-    end
+    %% 回傳使用者
+    A -->|reply_message| L --> U
 
-    L --> O
-
-    %% === Langfuse Observability ===
-    subgraph Langfuse["Langfuse（Tracing / Spans）"]
-        T[Trace<br/>crypto-agent.pipeline.SYMBOL]
-
-        S1[Span<br/>fetch_and_analyze]
-        S2[Span<br/>build_prompt]
-        S3[Span<br/>call_llm]
-        S4[Span<br/>format_message]
-
-        T --> S1 --> S2 --> S3 --> S4
-    end
-
-    %% LangGraph nodes <-> Langfuse spans（觀測）
-    F -. 建立 span .-> S1
-    P -. 建立 span .-> S2
-    L -. 建立 span .-> S3
-    M -. 建立 span .-> S4
-
-    %% === Langfuse infra (docker compose) ===
-    subgraph LangfuseStack["Langfuse Self-host Stack（docker-compose）"]
-        DB[(Postgres<br/>主資料庫)]
-        CK[(ClickHouse<br/>事件 / 向量資料)]
-        R[(Redis<br/>queue / cache)]
-        MIN[(Minio<br/>S3 物件儲存)]
-    end
-
-    Langfuse --- LangfuseStack
 ```
 
-1. 在 Langfuse 的 **Tracing → Traces** 裡，
-   選對應專案與對應 trace name
-   
-2. 點進任一 trace：
+#### LangGraph（控制流程）
 
-   * 左邊是「整條流程」的 timeline
-   * 中間選不同 span
+* 定義 **AgentState**（共享狀態）
+* 定義節點（nodes）與執行順序
+* 保證流程可重現、可擴充
 
-     * `fetch_and_analyze` 看 Binance 抓回來的 regime / pattern / summary
-     * `build_prompt` 看最後丟給 LLM 的 prompt
-     * `call_llm...` 看 LLM summary 原文
-     * `format_message` 看最後要送 LINE 的訊息
+#### Langfuse（觀測與除錯）
+
+* **每一次使用者請求 → 一條 Trace**
+* 每個節點 → 一個 Span
+* 每次 LLM 呼叫 → 一個 Generation（`.llm`）
+
+> 所有節點都在 **同一條 Trace 底下**，
+> 可完整看到「資料 → 分析 → LLM → 決策 → 回覆」的時間線
+
 
 ---
 
-### 更新 - LINE Bot：
-
-```mermaid
-flowchart LR
-    subgraph LINE
-      A[使用者輸入文字-->BTC投資建議]
-      A -->|POST webhook| B[Webhook Server]
-    end
-
-    subgraph Backend
-      B --> C{解析文字}
-      C -->|是投資建議| D[提取 Symbol]
-      D --> E[執行 Crypto Agent Pipeline]
-      E --> F[取得分析結果]
-      F --> G[回覆 LINE 訊息]
-    end
-
-    G -->|Reply API| LINE
-```
-
----
-
-### 更新 - 最終版系統整體（LINE → FastAPI → LangGraph → Ollama → Langfuse → 回覆 LINE）:
-
-```mermaid
-flowchart LR
-  U[LINE 使用者
-  輸入：BTC投資建議] --> L[LINE Platform]
-  L -->|Webhook| A[FastAPI /webhook
-  crypto_agent.main]
-
-  A -->|run_with_graph：symbol,intent| G[LangGraph StateGraph
-  crypto_agent.graph_crypto_agent]
-
-  subgraph G[LangGraph Pipeline（同一條 Trace）]
-    S0((START)) --> N1[fetch_and_analyze
-    抓K線/算signals]
-    N1 --> N2[manager_plan
-    選擇分析師集合]
-    N2 --> T[analyst.trend
-    LLM+signals→JSON]
-    T --> VP[analyst.volume_price
-    LLM+signals→JSON]
-    VP --> R[analyst.risk
-    LLM+signals→JSON]
-    R --> AL[analyst.allocator
-    LLM+signals→JSON]
-    AL --> M[manager_gate
-    驗證schema/信心門檻
-    必要時要求重跑]
-    M -->|pass| FS[final_summarize
-    投資經理統整 LLM]
-    M -->|retry| RT[bump_retry
-    回饋/重跑指定分析師]
-    RT --> T
-    FS --> FM[format_message
-    整理成LINE訊息]
-    FM --> E0((END))
-  end
-
-  G --> O[Ollama LLM
-ngrok / local]
-  G --> F[Langfuse
-  Traces/Spans/Inputs/Outputs]
-
-  A -->|reply_message| L --> U
-```
-
----
-
-## 🗂 Crypto AI Agent 專案結構
+## 🗂 Crypto AI Agent 專案結構 & 執行方式
 
 ```text
 crypto_agent/
-  config.py             # 環境變數、常數設定
-  data_binance.py       # Data Agent：抓幣安 K 線 + 量價
-  indicators.py         # Analysis Agent：技術指標計算 & 牛熊判斷 + 量價分析
-  llm_client.py         # Advice Agent：OpenAI LLM 包裝（之後可改 OpenRouter / Ollama / vLLM 等）
-  line_formatter.py     # 把分析結果 + LLM 回應，組成適合 LINE 顯示的訊息
-  run_local.py          # 本地測試用：模擬一次「查詢現在 BTC 形勢」完整流程
-  requirements.txt      # Python 相依套件
-  .env                  # 本機環境變數與密鑰（不應提交到版本控制）
+├ config.py               # API key 與環境變數設定（.env 讀取）
+├ data_binance.py         # 從 Binance 拿日線/週線 K 線與量價資料
+├ graph_crypto_agent.py   # LangGraph pipeline，將整個 Agent 流程串起
+├ indicators.py           # 技術指標計算（SMA/Bull-Bear Regime）＋日線量價分析
+├ line_formatter.py       # 將分析結果整合成適合 LINE 顯示的訊息格式
+├ llm_client.py           # LLM 客戶端呼叫統一 interface（OpenAI / Ollama）
+├ main.py                 # FastAPI + LINE Webhook 主入口（LINE Bot API）
+├ observability.py        # Langfuse 觀測與 Span/GenCtx 定義封裝
+├ run_local.py            # 本地測試腳本（模擬呼叫 Agent pipeline）
+├ requirements.txt        # Python 相依套件列表
+└ .env                    # 環境變數與敏感 Key（不應提交到 GitHub）
 ```
 
 > `run_local.py`：
 > 可先在自己機器上測試完整流程：
 > **「抓資料 → 計算技術指標 → 判斷 Regime → 丟給 LLM 產生建議」**
 > 確認輸出合理後，再接上 LINE Webhook ＋ 部署到 GCP。
+
+---
 
 ### 本地執行時，crypto_agent中需加入`.env`檔案，加入自己的Key:
 
@@ -260,68 +209,56 @@ LINE_CHANNEL_SECRET=
 LINE_CHANNEL_TOKEN=
 ```
 
-裝好套件（專案資料夾裡）：
+#### 裝好套件（專案資料夾裡）：
 
 ```
 pip install -r requirements.txt
 ```
 
-然後執行：
+#### 然後執行：
 
 ```
 python run_local.py
 ```
 
-接下來程式的預期流程大概是：
+#### 接下來程式的預期流程大概是：
 
 - data_binance.py 用 BINANCE_* 去抓 BTC 週線＋日線 K 線 & 量價
 
-- indicators.py 算出週線 Regime（Bull/Bear/Warning/Neutral）＋ 日線量價型態
+- indicators.py 算出週線 Regime（Bull/Bear...）＋ 日線量價型態
 
-- llm_client.py 用 OPENAI_API_KEY call OpenAI，生成一段中文說明
+- llm_client.py call LLM，生成一段中文說明
 
-- run_local.py 把整段結果 print 在 terminal（之後才會改成傳到 LINE）
+- run_local.py 把整段結果 print 在 terminal / 傳到 LINE
 
-假設使用ollama需要切換主機：
+#### 假設使用 ollama 需要先切換主機與拉取要使用的模型：
 ```
 export OLLAMA_HOST=<URL>   #指定 HOST
 ollama pull llama3.2:3b  #拉取
 ollama run llama3.2:3b   #測試
 ```
 
-LangFuse docker-compose.yml 參考：
+#### Line Bot 本機測試 Webhook（ngrok）：
 ```
-https://github.com/langfuse/langfuse/blob/main/docker-compose.yml
+ngrok http 8000  # 將 ngrok 產出的 URL 貼到 LINE Developer Console 的 webhook URL
+
+python -m uvicorn crypto_agent.main:app --reload --port 8000 # 專案根目錄下
+python -m uvicorn main:app --reload --port 8000  # crypto_agent 目錄下 
 ```
 
-Line Bot 本機測試 Webhook（ngrok）：
-```
-ngrok http 8000
-python -m uvicorn crypto_agent.main:app --reload --port 8000
-crypto_agent 根目錄下 python -m uvicorn main:app --reload --port 8000 
-```
-
-取到的網址假設是：
-```
-https://abcd1234.ngrok.io/webhook
-```
-
-把它貼到 LINE Developer Console 的 Webhook URL 欄位。
-
----
-
-## 🔍 Observability：使用 Langfuse 觀測整個 Agent Pipeline
+#### Observability：使用 Langfuse 觀測整個 Agent Pipeline
+[LangFuse docker-compose.yml 參考](https://github.com/langfuse/langfuse/blob/main/docker-compose.yml)
 
 已經整合 [Langfuse](https://langfuse.com/) 做觀測與除錯，目前支援：
 
-- 以 **LangGraph pipeline** 為單位建立一條 Trace  
+- 以 **LangGraph pipeline** 為單位建立 Trace  
 - 在 Trace 底下建立節點級的 Spans：
   - `fetch_and_analyze`（抓 Binance K 線 + 指標計算）
   - `build_prompt`（組 prompt 給 LLM）
   - `call_llm.*`（實際呼叫 LLM）
   - `format_message`（組成最後要丟 LINE 的訊息）
 
-### 2.1 啟動本地 Langfuse
+#### 啟動本地 Langfuse
 
 在 `crypto_agent/langfuse-local` 執行：
 
@@ -335,10 +272,630 @@ docker compose up -d
 
 ---
 
-## 📊 Analysis Agent 指標 – 長週期策略邏輯（週線 SMA Regime）
+
+## 架構檔案詳細說明
+
+
+### 📌 config.py
+
+**用途**
+
+* 統一從環境變數（`.env`）讀取
+
+  * Binance API Key
+  * LLM backend 設定
+  * Langfuse 設定
+  * LINE Bot Token / Secret
+
+**核心功能**
+
+* 讀取並整理設定為全域變數
+* 讓其他模組使用一致設定
+
+---
+
+### 📌 data_binance.py
+
+**用途**
+
+* 跟 Binance API 取得市場資料
+
+**主要功能**
+
+* `get_daily_klines(symbol, limit)` → 取得日線 K 線與成交量
+* `get_weekly_klines(symbol, limit)` → 取得週線 K 線
+
+**與 pipeline 對應**
+
+* `fetch_and_analyze` 節點會呼叫這裡取得資料做後續分析
+
+---
+
+### 📌 indicators.py
+
+**用途**
+
+* 技術指標計算與模式分析
+
+**主要功能**
+
+* `compute_weekly_regime(df_weekly)`：
+
+  * 計算週線 SMA50 / SMA100
+  * 判斷 Bull / Bear / Warning / Neutral
+* `analyze_daily_volume_price(df_daily)`：
+
+  * 計算日線量價型態（放量/縮量/收盤方向）
+  * 提供 summary pattern
+
+**與 pipeline 對應**
+
+* `fetch_and_analyze` 會呼叫這裡建立分析輸入
+
+---
+
+### 📌 graph_crypto_agent.py
+
+**用途**
+
+* 使用 LangGraph 連接整個 Agent pipeline
+
+**主要內容**
+
+* 定義節點（Nodes）
+* 定義 State schema（AgentState）
+* 定義每個節點的處理邏輯
+* 管理 state 在每個節點的 input / output
+* 呼叫觀測（SpanCtx / GenCtx）來追蹤
+
+**與 pipeline 對應**
+
+* `fetch_and_analyze`
+* `multi_analyst`（其中包含 analyst_weekly / analyst_daily / analyst_risk）
+* `manager_merge`
+* `format_message`
+
+---
+
+### 📌 line_formatter.py
+
+**用途**
+
+* 根據 `final_decision` 的結構化結果
+* 組裝成適合在 LINE 上顯示的文字訊息
+
+**主要功能**
+
+* 把 decision / summary / risk 等欄位整理成段落
+* 支援 emoji /段落格式化以提升可讀性
+
+---
+
+### 📌 llm_client.py
+
+**用途**
+
+* 統一 LLM 呼叫邏輯
+
+**特性**
+
+* 根據 `.env` 參數切換後端（OLLAMA / OpenAI）
+* 用 `chat_json()` 取得 JSON 格式回覆
+* 適配各種 LLM 呼叫方式（REST / local host / API key）
+
+**與 pipeline 對應**
+
+* 三個分析師（analyst_weekly / analyst_daily / analyst_risk）會呼叫這裡送出 prompt
+
+---
+
+### 📌 main.py
+
+**用途**
+
+* FastAPI 與 LINE Webhook 的主入口
+* 看見外部 HTTP webhook（LINE）後，觸發 Agent 執行
+
+**主要功能**
+
+* 解析 LINE 訊息
+* 根據文字提取 Symbol 與 Intent
+* 呼叫 `run_with_graph(symbol, user_text)` 取得結果
+* 使用 LINE Bot API 回覆訊息
+
+---
+
+### 📌 observability.py
+
+**用途**
+
+* 提供 Langfuse 觀測的封裝
+* 定義 SpanCtx / GenCtx / safe_preview 等輔助
+
+**主要功能**
+
+* 讓每個節點在執行時自動產生觀測 span
+* 讓每次 LLM 呼叫紀錄 generation
+* 包裝 exception / metadata 更新
+
+---
+
+### 📌 run_local.py
+
+**用途**
+
+* 本地測試腳本（獨立於 LINE Webhook 之外）
+* 模擬一次「查詢現在 BTC 形勢」完整流程
+* 方便開發與除錯
+
+**主要用途**
+
+* 呼叫 `run_with_graph()` 並印出結果
+* 可直接在終端測試與觀察輸出
+
+---
+
+### 📌 service.py
+
+**用途**
+
+* 把 LINE webhook 拆成可重用的服務邏輯
+* 切分事件處理與回覆邏輯
+* 方便未來支援更多介面或事件類型
+
+**主要功能**
+
+* 事件判斷（文字、站內訊息等）
+* 根據使用者意圖路由到不同 handler
+
+---
+
+### 📌 requirements.txt
+
+**用途**
+
+* 記錄所有 Python 套件依賴
+* 方便用 `pip install -r requirements.txt` 安裝
+
+---
+
+### 📌 .env
+
+**用途**
+
+* 放置環境變數與各種金鑰
+* **注意不要提交至版本控制**
+
+**項目**
+
+```
+OPENAI_API_KEY
+OPENAI_MODEL
+BINANCE_API_KEY
+BINANCE_API_SECRET
+SYMBOL
+LLM_BACKEND
+OLLAMA_MODEL
+OLLAMA_BASE_URL
+LANGFUSE_ENABLED
+LANGFUSE_PUBLIC_KEY
+LANGFUSE_SECRET_KEY
+LANGFUSE_BASE_URL
+LINE_CHANNEL_SECRET
+LINE_CHANNEL_ACCESS_TOKEN
+```
+
+---
+
+## 📌 系統特色
+
+### ✔ 使用者意圖驅動分析（Intent Driven）
+
+系統會從輸入中解析使用者意圖：
+
+| 使用者輸入      | Intent         |
+| ---------- | -------------- |
+| `BTC 投資建議` | general_advice |
+| `我想抄底 BTC` | bottom_fishing |
+| `我怕回撤`     | risk_averse    |
+| `想賣出 BTC`  | take_profit    |
+| `我重倉 BTC`  | heavy_position |
+
+每種意圖會影響分析師投票權重與解讀重點。
+
+### ✔ Intent 加權投票決策
+
+根據使用者意圖，調整每位分析師的重要性：
+
+| Intent         | weekly | daily | risk |
+| -------------- | ------ | ----- | ---- |
+| general_advice | 1.0    | 1.0   | 1.0  |
+| bottom_fishing | 0.5    | 1.5   | 1.0  |
+| risk_averse    | 0.5    | 1.0   | 1.5  |
+| take_profit    | 1.0    | 0.8   | 1.4  |
+| heavy_position | 1.0    | 1.2   | 0.8  |
+
+最終結論由 **加權投票得分最高者** 決定。
+
+---
+
+### ✔ 多分析師共同評估
+
+三位 LLM 分析師各司其職：
+
+* **analyst_weekly** — 週線趨勢分析（是否仍在主要趨勢中）
+* **analyst_daily** — 日線量價型態分析（是否適合動作）
+* **analyst_risk**  — 風險與倉位控制分析（當前行為的風險與倉位控制）
+
+每位分析師會輸出嚴格 JSON 格式的分析結果：
+
+```jsonc
+{
+  "ok": true,
+  "focus": "weekly",
+  "decision": "...(buy/hold/sell)...",
+  "summary": "...",
+  "confidence": "...(high/medium/low)...",
+  "key_levels": {"support":"...", "resistance":"..."},
+  "notes": "...",
+  "missing": []
+}
+```
+
+最後再由 **manager_merge** 投資經理 LLM 統整資訊提供最終建議，Pipeline 如下 : 
+
+```mermaid
+flowchart LR
+    subgraph Pipeline["LangGraph Agent Pipeline"]
+        A[fetch_and_analyze<br/>
+        Data + Signals]
+        B1[analyst_weekly<br/>
+        長週期趨勢]
+        B2[analyst_daily<br/>
+        短週期節奏]
+        B3[analyst_risk<br/>
+        風險控管行為]
+        C[manager_merge<br/>
+        決策統整]
+        D[format_message<br/>
+        輸出整合文字]
+    end
+
+    A --> B1
+    A --> B2
+    A --> B3
+    B1 --> C
+    B2 --> C
+    B3 --> C
+    C --> D
+```
+
+---
+
+### ✔ 可觀測的 Trace（Langfuse）
+
+系統與各 LLM 呼叫流程都透過 Langfuse 建立 Trace：
+
+```
+crypto_agent.run
+├ fetch_and_analyze
+├ analyst_weekly
+│  └ analyst_weekly.llm
+├ analyst_daily
+│  └ analyst_daily.llm
+├ analyst_risk
+│  └ analyst_risk.llm
+├ manager_merge
+└ format_message
+```
+
+在 Langfuse UI 可以逐層檢視：
+
+* prompt preview
+* llm raw preview
+* final outputs
+* metadata / debug logs
+
+### 節點一覽（Langfuse Trace 對應）
+
+| Langfuse Span 名稱     | 節點角色                | 說明        |
+| -------------------- | ------------------- | --------- |
+| `crypto_agent.run`   | Root Controller     | 一次完整請求的總控 |
+| `fetch_and_analyze`  | Data / Signal Agent | 抓資料＋計算指標  |
+| `analyst_weekly`     | 週線趨勢分析師             | 長週期結構判斷   |
+| `analyst_weekly.llm` | LLM 呼叫              | 長週期分析師的模型推論 |
+| `analyst_daily`      | 日線量價分析師             | 短期節奏判斷    |
+| `analyst_daily.llm`  | LLM 呼叫              | 短期分析師的模型推論        |
+| `analyst_risk`       | 風險控管分析師             | 行為與風控     |
+| `analyst_risk.llm`   | LLM 呼叫              | 風控分析師的模型推論        |
+| `manager_merge`      | 投資經理                | 規則式整合決策   |
+| `format_message`     | Interface Agent     | 組 LINE 回覆 |
+
+### 程式中使用 AgentState 共享全流程狀態
+
+> AgentState 是 LangGraph 在節點之間傳遞的狀態物件
+
+```python
+class AgentState(TypedDict, total=False):
+    symbol: str
+    user_text: str
+    ts: str
+    intent: str
+
+    weekly_row: Dict[str, float]
+    weekly_regime: str
+    daily_pattern: Dict[str, Any]
+    daily_candles: List[Dict[str, Any]]
+
+    analyst_weekly: AnalystResult
+    analyst_daily: AnalystResult
+    analyst_risk: AnalystResult
+
+    final_decision: Dict[str, Any] # buy/hold/sell
+    message: str
+```
+
+### 解釋
+
+* `symbol`: e.g. `"BTCUSDT"`
+* `user_text`: 原始提問
+* `ts`: timestamp
+* `intent`: 使用者意圖
+
+* `weekly_row`: dict，代表「最新週線關鍵數值」
+
+  * `close`: 最新週 close
+  * `sma50`: 最新週 sma50
+  * `sma100`: 最新週 sma100
+
+* `weekly_regime`: 字串 週線市場景況
+* `daily_pattern`: dict，代表「日線量價特徵摘要」
+  * `close_dir`: up/down/flat
+  * `vol_ratio`: 今天量 / N 日均量
+* `daily_candles`: list[dict]，近 35 日 K 線
+
+  * `date/open/high/low/close/volume`
+  
+* `analyst_xxx` 三分析師 AnalystResult JSON:
+
+  * `ok`: bool（是否有效）
+  * `focus`: `"weekly"`
+  * `decision`: `"buy"|"hold"|"sell"`
+  * `summary`: 用人話講結論依據
+  * `confidence`: high/medium/low（你現在 weekly 版本才有）
+  * `key_levels`: support/resistance（你現在 weekly 版本才有）
+  * `notes`: 補充風險或注意事項
+  * `missing`: 缺資料清單
+
+* `final_decision`: 最終建議決策 (`"buy"|"hold"|"sell"`)
+* `message`: 最終文字（LINE）
+---
+
+### Langfuse 各節點詳細說明（含 Input / Output）
+
+---
+
+### A. `crypto_agent.run`（Root Trace）
+
+### 職責
+
+* 建立同一條 Langfuse Trace
+* Parse 使用者意圖（intent）
+* 啟動 LangGraph pipeline
+* 回傳最終文字結果
+
+### Input
+
+| 欄位          | 說明                        |
+| ----------- | ------------------------- |
+| `symbol`    | 交易標的（BTCUSDT）             |
+| `user_text` | 原始使用者提問                   |
+| `intent`    | 行為意圖（general / 抄底 / 怕回撤…） |
+| `ts`        | 請求時間                      |
+
+### Output
+
+| 欄位              | 說明             |
+| --------------- | -------------- |
+| `final_message` | 最終回覆給 LINE 的文字 |
+
+---
+
+### B. `fetch_and_analyze`（Data / Signal Agent）
+
+### 職責
+
+> **唯一負責「資料取得與技術指標計算」的節點**
+
+### Input
+
+| 欄位          | 說明    |
+| ----------- | ----- |
+| `symbol`    | 幣別    |
+| `user_text` | 使用者提問 |
+| `intent`    | 行為意圖  |
+| `ts`        | 時間戳   |
+
+### 處理內容
+
+* Binance 日線 / 週線 K 線
+* 週線 SMA50 / SMA100
+* 週線 Regime（Bull / Bear / Warning / Neutral）
+* 日線量價型態
+* 近 35 日 K 線序列（給 LLM 使用）
+
+### Output
+
+| 欄位              | 說明                       |
+| --------------- | ------------------------ |
+| `weekly_regime` | 週線市場狀態                   |
+| `weekly_row`    | `{close, sma50, sma100}` |
+| `daily_pattern` | 日線量價摘要                   |
+| `daily_candles` | 近 35 日 K 線               |
+
+---
+
+### C. 三位分析師（Analyst Agents）
+
+> **重點設計理念：**
+>
+> * 三位分析師 **使用相同資料**
+> * 但負責回答「不同層次的問題」
+
+---
+
+### C1. `analyst_weekly`（週線趨勢分析師）
+
+### 定位
+
+> 回答：「**現在是不是順勢？**」
+
+### Input
+
+* weekly_regime
+* weekly_row
+* daily_pattern
+* user intent（作為語意輔助）
+
+### Output（JSON）
+
+| 欄位           | 說明                |
+| ------------ | ----------------- |
+| `decision`   | buy / hold / sell |
+| `summary`    | 長週期趨勢說明           |
+| `confidence` | 趨勢信心  (high/medium/low)       |
+| `key_levels` | 關鍵支撐壓力 (support/resistance)    |
+| `notes`      | 補充風險              |
+
+---
+
+### C2. `analyst_daily`（日線量價分析師）
+
+### 定位
+
+> 回答：「**短期節奏操作會不會逆風？**」
+
+### Input
+
+* daily_pattern
+* daily_candles
+* weekly context
+
+### Output
+
+| 欄位         | 說明                |
+| ---------- | ----------------- |
+| `decision` | buy / hold / sell |
+| `summary`  | 短期量價解讀            |
+| `notes`    | 節奏風險提醒            |
+
+---
+
+### C3. `analyst_risk`（風險控管分析師）
+
+### 定位
+
+> **不是判斷趨勢，而是約束行為。**
+> 把「使用者想做的事」轉成「不容易爆掉的做法」。
+
+### 關心的不是：
+
+* 指標準不準
+
+### 而是：
+
+* 該不該現在動？
+* 該怎麼分批？
+* 該避免什麼行為？
+
+### Output
+
+| 欄位         | 說明                              |
+| ---------- | ------------------------------- |
+| `decision` | buy / hold / sell（供 manager 統一） |
+| `summary`  | 行為建議                            |
+| `notes`    | 倉位 / 回撤 / 情緒風險                  |
+
+---
+
+### LLM 呼叫節點 : `analyst_xxx.llm` 解釋
+
+* `analyst_xxx`：**分析師節點本身**
+* `analyst_xxx.llm`：**該節點內的一次 LLM 呼叫**
+
+用途：
+
+* 清楚區分「流程邏輯」與「模型推論」
+* 可獨立分析 prompt / latency / output
+* 日後可替換模型或 prompt 而不動流程
+
+---
+
+# D. `manager_merge`（投資經理）
+
+### 職責
+
+* 用 **可解釋的規則**，整合多分析師結論
+
+### Input
+
+* analyst_weekly
+* analyst_daily
+* analyst_risk
+* intent → 對應權重
+
+### 處理邏輯
+
+* 只採用 `ok = true` 的分析師
+* 根據 intent 加權（例如：抄底 → 日線權重較高）
+* 產生 final_decision
+
+### Output
+
+```json
+{
+  "final_decision": "hold",
+  "summary": "...",
+  "risk": ["...", "..."]
+}
+```
+
+---
+
+# E. `format_message`（Interface Agent）
+
+### 職責
+
+* 將結構化結果轉為 **LINE 友善文字**
+* 不涉及任何判斷邏輯
+
+### Input
+
+* symbol
+* final_decision
+
+### Output
+
+* `message`（最終回覆）
+
+---
+
+## 📊 Analysis Agent 主要使用指標 – 長週期策略邏輯（週線 SMA Regime）
 
 > 站在「**長週期現貨投資者**」角度，評估：
 > **週線 SMA50／SMA100 牛熊判斷 + 日線量價（放量／縮量）情況**，作為大方向的節奏判斷。
+
+### 主要會做以下初步判斷:
+
+1) 週線 Regime (市場景況):
+
+    週線使用 SMA50 / SMA100 做 trend 判斷
+
+    並依照距離判別 bull / bear / warning / neutral
+
+2) 日線量價:
+
+    日線量價結合成交量與 K 線變化給出 pattern
 
 ### 1️⃣ 週線 Regime 定義（Bull / Bear / Warning / Neutral）
 
@@ -506,15 +1063,99 @@ docker compose up -d
 
 > 這一組結果主要是想說明：
 > **這個 Regime 判斷邏輯是有在實際歷史走勢上跑過回測的，而不是隨便亂畫的線。**
-> 接下來 Python / Agent 端就是把這套邏輯搬到後端，用來給 AI Agent 判斷「現在大概在哪一個週期」。
+> 用來給 AI Agent 判斷「現在大概在哪一個週期」。
 
 ---
 
-### 初版串接成果
+## 目前暫時不加入其他技術指標 (Ex: RSI / BB) 做為其他節點的分析師
+
+### 設計取捨說明
+
+> **目前不以「技術指標」作為分析師拆分單位**，
+> 而是以「**決策層級與責任**」拆分角色
+
+原因：
+
+1. 多指標高度共線（ SMA / RSI / BB 在趨勢行情下高度相關）
+2. 指標越多 → 多數決越容易產生假共識
+3. 投資決策真正需要的是：
+
+   * 趨勢層級（週線）
+   * 節奏層級（日線）
+   * 行為與風險層級（風控）
+
+---
+
+## 初版串接成果
 
 <img src="./img/Demo2.png" width="100%" /> 
 
 > 品質有待加強...
+
+### V1
+
+<img src="./img/Demo3.png" width="100%" /> 
+
+> 好了一點
+
+### V2
+
+<img src="./img/Demo4.png" width="100%" /> 
+
+> 有樣子了
+
+<img src="https://github.com/jiunjiun69/Crypto-AI-Agent-Framework/blob/main/img_v2/v2_Demo.gif" alt="v2_Demo" width="300"/>
+
+---
+
+## 📊 使用示例與輸出
+
+### 👉 一般投資建議
+
+輸入：
+
+```
+BTC 投資建議
+```
+
+回傳：
+
+```
+【BTCUSDT 形勢分析（AI Agent）】
+
+✅ 結論：HOLD
+
+🧠 重點摘要：
+近期日線顯示強烈的上升趨勢，短期內可能再次創高…
+
+⚠️ 風險提醒：
+- 近期波動仍大
+- 需密切觀察市場趨勢
+```
+
+---
+
+### 👉 抄底意圖
+
+輸入：
+
+```
+我想抄底 BTC
+```
+
+回傳：
+
+```
+【BTCUSDT 形勢分析（AI Agent）】
+
+✅ 結論：BUY
+
+🧠 重點摘要：
+短線支撐區出現反轉信號，RSI 底背離強化了抄底機會…
+
+⚠️ 風險提醒：
+- 若跌破支撐請重新評估策略
+```
 
 ---
 
@@ -523,15 +1164,16 @@ docker compose up -d
 短期：
 
 * [x] 加入連接 langchain ollama (可切換ollama/OpenAI API)
-* [ ] 加入 LINE Messaging API webhook，部署到 GCP Cloud Run
-* [ ] 在 LINE 中用自然語言指令查詢，例如「查 BTC」「查 ETH」「幫我看週線」
+* [x] 加入 LINE Messaging API webhook
+* [ ] 部署到 GCP Cloud Run
+* [x] 在 LINE 中用不同自然語言指令，例如「BTC 投資建議」「我想抄底 BTC」「想賣出 BTC」
 * [ ] 增加簡單風險提示（例如：近期高波動、槓桿市場過熱等）
 
 中期（跟讀書會題目對齊的部分）：
 
-* [ ] 將目前的單流程拆成「顯式的多 Agent 流程節點」（更接近 LangGraph 的設計方式）
+* [x] 將目前的單流程拆成多 Agent 流程節點（ LangGraph ）
 * [ ] 加入「簡單記憶」：記錄歷次判斷結果與後續走勢，用來調整規則或作為回顧素材
-* [ ] 探索使用 LangChain / LangGraph 將各 Agent 串成可視化、可維護的工作流
+* [x] 使用 LangChain / LangGraph 將各 Agent 串成可視化、可維護的工作流
 
 長期（有空再玩）：
 
