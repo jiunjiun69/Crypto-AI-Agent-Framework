@@ -1,7 +1,7 @@
 # Crypto-AI-Agent-Framework
 
-以 **AI Agent Framework** 為核心概念，嘗試將多代理（Data / Analysis / Advice / Interface）的分工，實作在加密貨幣現貨投資場景上。  
-目前先聚焦在 **BTC 現貨、長週期判趨勢＋短週期量價輔助判斷**，作為讀書會與個人實驗用專案。
+以 **LangGraph + Langfuse** 為核心的「可觀測多角色 AI Agent Pipeline」，實作在加密貨幣（目前以 **BTC 現貨** 為主）的投資決策輔助場景。  
+系統採用 **三位 LLM 分析師（週線趨勢 / 日線量價節奏 / 風險與倉位控管）** 共同評估，最後由 **規則式投資經理（Intent 加權投票）** 統整成 `buy / hold / sell` 建議，並透過 **LINE Bot** 以自然語言互動回覆；全流程輸入/輸出與每次 LLM 推論皆可在 **Langfuse Trace** 中追蹤與除錯。
 
 ---
 
@@ -118,16 +118,13 @@ flowchart LR
 
         %% 投資經理彙整
         W --> M[manager_merge
+        投資經理觀點
         加權 / 共識整合]
         D --> M
         RSK --> M
 
-        %% 最終輸出
-        M --> FS[final_summarize
-        投資經理觀點
-        LLM]
-
-        FS --> FM[format_message
+        %% 最終輸出（直接格式化）
+        M --> FM[format_message
         轉為 LINE 訊息]
 
         FM --> E0((END))
@@ -140,7 +137,6 @@ flowchart LR
 
     %% 回傳使用者
     A -->|reply_message| L --> U
-
 ```
 
 #### LangGraph（控制流程）
@@ -188,7 +184,7 @@ crypto_agent/
 ### 本地執行時，crypto_agent中需加入`.env`檔案，加入自己的Key:
 
 ```
-OPENAI_API_KEY=
+OPENAI_API_KEY=sk-
 OPENAI_MODEL=gpt-4o-mini
 BINANCE_API_KEY=
 BINANCE_API_SECRET=
@@ -201,12 +197,12 @@ OLLAMA_MODEL=llama3.2:3b
 OLLAMA_BASE_URL=
 # LangFuse 設定
 LANGFUSE_ENABLED=true
-LANGFUSE_PUBLIC_KEY=
-LANGFUSE_SECRET_KEY=
+LANGFUSE_PUBLIC_KEY=pk-
+LANGFUSE_SECRET_KEY=sk-
 LANGFUSE_BASE_URL=http://localhost:3000
 # Line Bot 設定
 LINE_CHANNEL_SECRET=
-LINE_CHANNEL_TOKEN=
+LINE_CHANNEL_ACCESS_TOKEN=
 ```
 
 #### 裝好套件（專案資料夾裡）：
@@ -255,7 +251,7 @@ python -m uvicorn main:app --reload --port 8000  # crypto_agent 目錄下
 - 在 Trace 底下建立節點級的 Spans：
   - `fetch_and_analyze`（抓 Binance K 線 + 指標計算）
   - `build_prompt`（組 prompt 給 LLM）
-  - `call_llm.*`（實際呼叫 LLM）
+  - `analyst_weekly(.llm) / analyst_daily(.llm) / analyst_risk(.llm)`（實際呼叫 LLM）
   - `format_message`（組成最後要丟 LINE 的訊息）
 
 #### 啟動本地 Langfuse
