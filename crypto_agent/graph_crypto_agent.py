@@ -9,7 +9,7 @@ Nodes:
     - analyst_weekly span + generation
     - analyst_daily span + generation
     - analyst_risk span + generation
-    - manager_merge span
+    - investment_manager span
     - format_message span
 """
 
@@ -382,7 +382,7 @@ def investment_manager_node(state: AgentState) -> AgentState:
     intent = state.get("intent", "general_advice")
     weights = INTENT_WEIGHTS.get(intent, INTENT_WEIGHTS["general_advice"])
 
-    # 1) Rule-based 決策融合（和原 manager_merge_node 一致）
+    # 1) Rule-based 決策融合
     with SpanCtx("investment_manager", {"intent": intent, "weights": weights}) as span:
 
         # 順序固定讀三個分析師
