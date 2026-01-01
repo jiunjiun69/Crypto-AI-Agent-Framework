@@ -48,7 +48,7 @@ flowchart LR
 
     W -->|文字訊息| L
     L -->|回覆當前 BTC 形勢與建議| U
-````
+```
 
 ---
 
@@ -255,6 +255,20 @@ python -m uvicorn crypto_agent.main:app --reload --port 8000
 python -m uvicorn main:app --reload --port 8000
 ```
 
+## 💬 LINE 使用方式（避免干擾群組聊天）
+
+```markdown
+為避免在群組中誤觸發，只有以下前綴會觸發 Agent：
+- `!問題`
+- `@問題`
+- `/crypto 問題`
+- `/c 問題`
+
+例如：
+- `!BTC 投資建議`
+- `@我想抄底 ETH`
+- `/c BTC 想賣出要不要先減倉`
+
 ---
 
 ## 🔭 Observability：Langfuse 觀測整個 Agent Pipeline
@@ -321,11 +335,11 @@ docker compose up -d
 {
   "ok": true,
   "focus": "weekly",
-  "decision": "...(buy/hold/sell)...",
+  "decision": "buy",
   "summary": "...",
-  "confidence": "...(high/medium/low)...",
+  "confidence": "high",
   "key_levels": {"support":"...", "resistance":"..."},
-  "notes": "...",
+  "notes": ["...", "..."],
   "missing": []
 }
 ```
@@ -459,11 +473,10 @@ class AgentState(TypedDict, total=False):
 
 * `final_decision`: 最終建議決策 (`"buy"|"hold"|"sell"`)
 * `message`: 最終文字（LINE）
----
-
-### Langfuse 各節點詳細說明（含 Input / Output）
 
 ---
+
+## Langfuse 各節點詳細說明（含 Input / Output）
 
 ### A. `crypto_agent.run`（Root Trace）
 
@@ -621,7 +634,7 @@ class AgentState(TypedDict, total=False):
 
 ---
 
-# D. `investment_manager`（投資經理）
+## D. `investment_manager`（投資經理）
 
 ### 職責
 
@@ -941,7 +954,7 @@ BTC 投資建議
 ✅ 結論：BUY
 
 🧠 重點摘要：
-短線支撐區出現反轉信號，RSI 底背離強化了抄底機會…
+短線支撐區出現反轉信號，量價背離強化了抄底機會…
 
 ⚠️ 風險提醒：
 - 若跌破支撐請重新評估策略

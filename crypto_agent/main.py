@@ -28,7 +28,7 @@ load_dotenv()
 app = FastAPI()
 
 TRIGGER_PREFIXES = ("!", "！", "@", "？", "?")
-TRIGGER_COMMANDS = ("/crypto", "/c")  # 你也可以選擇支援指令型前綴
+TRIGGER_COMMANDS = ("/crypto", "/c")  # 支援指令型前綴
 
 COMMON_TOKENS = {
     "BTC", "ETH", "SOL", "BNB", "ADA", "XRP", "DOGE", "AVAX", "LINK", "DOT",
