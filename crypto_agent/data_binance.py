@@ -5,9 +5,34 @@ from typing import Literal
 import pandas as pd
 import requests
 
+"""
+參閱 Binance API 文件：
+    https://github.com/binance/binance-public-data?tab=readme-ov-file#klines
+    https://binance-docs.github.io/apidocs/spot/en/#kline-candlestick-data
+
+1. 公共現貨 Klines (Candlestick) 資料端點 (無需 API Key 即可使用此端點取得 Klines 資料)
+    https://api.binance.com/api/v3/klines
+
+
+2. Swagger UI (/api/v3/klines):
+    https://binance.github.io/binance-api-swagger/
+
+3. 回傳格式欄位說明（目前回傳只有照順序排序，不會顯示key資訊）：
+    Open time                       : 開盤時間
+    Open                            : 開盤價
+    High                            : 最高價
+    Low                             : 最低價
+    Close                           : 收盤價
+    Volume                          : 成交量
+    Close time                      : 收盤時間
+    Quote asset volume              : 交易量
+    Number of trades                : 成交筆數
+    Taker buy base asset volume     : 買進基礎資產成交量
+    Taker buy quote asset volume    : 買入報價資產成交量
+    Ignore                          : 忽略
+"""
 
 BINANCE_SPOT_KLINES_URL = "https://api.binance.com/api/v3/klines"
-
 
 def _get_klines(
     symbol: str,
@@ -54,7 +79,9 @@ def _get_klines(
     """
     symbol = symbol.upper().strip()
     params = {"symbol": symbol, "interval": interval, "limit": int(limit)}
+    print(f"[INFO] Fetching klines from Binance: {params}")
     r = requests.get(BINANCE_SPOT_KLINES_URL, params=params, timeout=30)
+    print(f"[INFO] Binance response status: {r}")
     r.raise_for_status()
     rows = r.json()
 

@@ -27,19 +27,93 @@ load_dotenv()
 
 app = FastAPI()
 
-def _extract_symbol(text: str) -> str:
+TRIGGER_PREFIXES = ("!", "！", "@", "？", "?")
+TRIGGER_COMMANDS = ("/crypto", "/c")  # 你也可以選擇支援指令型前綴
+
+COMMON_TOKENS = {
+    "BTC", "ETH", "SOL", "BNB", "ADA", "XRP", "DOGE", "AVAX", "LINK", "DOT",
+    "MATIC", "OP", "ARB", "SUI", "APT", "ATOM", "LTC", "BCH", "TRX", "UNI",
+}
+
+def _strip_trigger(text: str) -> tuple[bool, str]:
+    t = (text or "").strip()
+    if not t:
+        return False, ""
+
+    # 指令型（允許 "/crypto BTC投資建議"）
+    low = t.lower()
+    for cmd in TRIGGER_COMMANDS:
+        if low.startswith(cmd):
+            rest = t[len(cmd):].lstrip(" ：:")  # 去掉分隔符
+            return True, rest
+
+    # 符號型（允許 "!BTC投資建議"、"@我想抄底 BTC"）
+    if t.startswith(TRIGGER_PREFIXES):
+        rest = t[1:].lstrip(" ：:")
+        return True, rest
+
+    return False, t
+
+
+def _has_common_token(text: str) -> bool:
+    up = (text or "").upper()
+    return any(re.search(rf"\b{tok}\b", up) for tok in COMMON_TOKENS)
+
+def _extract_symbol(text: str) -> str | None:
     """
-    Extract token like BTC/ETH/SOL... and convert to {TOKEN}USDT.
-    If none found, default BTCUSDT.
+    從文字中抓幣種，回傳例如 'BTCUSDT'。
+    抓不到就回傳 None（不要硬預設，避免使用者聊別的也噴BTC分析）。
     """
-    m = re.search(r"\b([A-Za-z]{2,10})\b", text)
+    print(f"[DEBUG] _extract_symbol input: {text}")
+    t = (text or "").strip()
+
+    # 1) 先處理中文別名（可以再擴充）
+    zh_map = {
+        "比特幣": "BTC",
+        "大餅": "BTC",
+        "以太幣": "ETH",
+        "以太坊": "ETH",
+        "以太": "ETH",
+        "二餅": "ETH",
+        "狗狗幣": "DOGE",
+        "狗幣": "DOGE",
+        "柴犬幣": "SHIB",
+        "柴幣": "SHIB",
+        "幣安幣": "BNB",
+        "幣安": "BNB",
+        "艾達幣": "ADA",
+        "艾達": "ADA",
+    }
+    for k, v in zh_map.items():
+        if k in t:
+            return f"{v}USDT"
+
+    # 2) 英文代號
+    m = re.search(r"(?i)(?<![A-Za-z])([A-Za-z]{2,15})(?:USDT)?(?![A-Za-z])", t)
     if not m:
-        return "BTCUSDT"
+        return None
 
     token = m.group(1).upper()
-    if token in {"USDT", "AI", "AGENT"}:
-        return "BTCUSDT"
+
+    # 避免抓到非幣種單字
+    blacklist = {"USDT", "AI", "AGENT", "BUY", "SELL", "HOLD"}
+    if token in blacklist:
+        return None
+
+    # 如果使用者自己就打了 BTCUSDT 這種 pair，就直接用
+    if token.endswith("USDT"):
+        return token
+
     return f"{token}USDT"
+
+
+def _looks_like_invest_question(text: str) -> bool:
+    """
+    不再當作「門檻」，只用來：抓不到幣時，要不要預設 BTC。
+    """
+    t = (text or "").strip()
+    hints = ["投資", "建議", "買", "賣", "抄底", "加倉", "減倉", "止損", "停利", "做多", "做空", "回調", "回撤", "幣", "加密"]
+    return any(h in t for h in hints)
 
 
 def _is_crypto_question(text: str) -> bool:
@@ -113,25 +187,59 @@ if LINE_ENABLED:
                 text = (event.message.text or "").strip()
                 if not text:
                     continue
+                print(f"[INFO] Received LINE message: {text}")
+                triggered, query = _strip_trigger(text)
+                print(f"[INFO] Triggered: {triggered}, Query: {query}")
+                # 沒有前綴：直接忽略，不回覆（避免干擾）
+                if not triggered:
+                    continue
 
-                if not _is_crypto_question(text):
+                # 有前綴但沒內容：回使用說明
+                if not query:
                     reply_text = (
-                        "你可以直接問：\n"
-                        "- BTC投資建議\n"
-                        "- 我想抄底 BTC\n"
-                        "- 我重倉 BTC 怕回撤\n"
-                        "- 我空手 想等回調\n"
-                        "- BTC 想賣出 要不要先減倉\n"
-                        "- ETH 做多可以嗎\n"
+                        "請用 ! 或 @ 開頭再問我，例如：\n"
+                        "!BTC投資建議\n"
+                        "!我想抄底 BTC\n"
+                        "@我重倉 BTC 怕回撤\n"
+                        "!BTC 想賣出 要不要先減倉\n"
+                        "!ETH 做多可以嗎\n"
                     )
                 else:
-                    symbol = _extract_symbol(text)
+                    # 有前綴但不像幣圈問題：回使用說明（避免亂觸發 LLM）
+                    # if (not _is_crypto_question(query)) and (not _has_common_token(query)):
+                    #     reply_text = (
+                    #         "我只處理幣圈投資問題，請用例如：\n"
+                    #         "!BTC投資建議\n"
+                    #         "!我想抄底 BTC\n"
+                    #         "@我重倉 BTC 怕回撤\n"
+                    #         "!BTC 想賣出 要不要先減倉\n"
+                    #         "!ETH 做多可以嗎\n"
+                    #     )
+                    # else:
+                    #     symbol = _extract_symbol(query)
+                    #     reply_text = run_with_graph(symbol, user_text=query)
                     
-                    reply_text = run_with_graph(symbol, user_text=text)
-                    # try:
-                    #     reply_text = run_with_graph(symbol, user_text=text)
-                    # except Exception as e:
-                    #     reply_text = f"系統發生錯誤，請稍後再試\n{e}"
+                    symbol = _extract_symbol(query)
+                    print(f"[INFO] 抓到的幣種: {symbol}")
+                    # continue # for debug
+
+                    if symbol is None:
+                        # 抓不到幣種：如果看起來在問投資，就先用 BTCUSDT；否則給引導
+                        if _looks_like_invest_question(query):
+                            symbol = "BTCUSDT"
+                            reply_text = run_with_graph(symbol, user_text=query)
+                        else:
+                            reply_text = (
+                                "我目前主要提供加密貨幣投資判斷。\n"
+                                "請在訊息中帶幣種，例如：\n"
+                                "!BTC投資建議\n"
+                                "!我想抄底 BTC\n"
+                                "@我重倉 BTC 怕回撤\n"
+                                "!BTC 想賣出 要不要先減倉\n"
+                                "!ETH 做多可以嗎\n"
+                            )
+                    else:
+                        reply_text = run_with_graph(symbol, user_text=query)
 
                 line_bot_api.reply_message(
                     ReplyMessageRequest(
