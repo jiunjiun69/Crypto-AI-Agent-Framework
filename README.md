@@ -949,6 +949,45 @@ BTC 投資建議
 
 ---
 
+## 🔭 Langfuse Observability 成果展示（Trace / Span / Generation）
+
+本專案把「一次使用者提問」完整記錄成 **Langfuse 的一條 Trace**，並把每個 LangGraph 節點記為 **Span**、每次 LLM 呼叫記為 **Generation（`.llm`）**。  
+因此可以用同一條時間線，追到「資料取得 → 指標計算 → 三角色推論 → 加權整合 → 最終回覆」每一步的 input/output、延遲與除錯資訊。
+
+下方截圖示範一次查詢（例：`!BTC投資建議`）在 Langfuse 的觀測結果：
+
+### 1) Trace Overview：一次請求的全流程時間線 + 最終輸出
+可看到整條 Trace 的節點樹狀結構、各節點耗時，以及最終回覆文字（final_message）。
+<img src="./img_v2/1.png" alt="Langfuse Trace Overview" width="100%"/>
+
+### 2) `fetch_and_analyze`：資料取得與 signals 計算（非 LLM）
+此 Span 只負責「抓幣安 K 線」與「計算週線 Regime / 日線量價摘要」，輸出會作為後續三位分析師共同輸入。
+<img src="./img_v2/2.png" alt="fetch_and_analyze span output" width="100%"/>
+
+### 3) `analyst_weekly.llm`：週線分析師的 Prompt 與 JSON 輸出
+可以直接在 Generation 看到 prompt_preview 與模型輸出的 JSON（decision / key levels / notes），方便定位提示詞與回覆品質問題。
+<img src="./img_v2/3.png" alt="analyst_weekly.llm generation" width="100%"/>
+
+### 4) `analyst_daily.llm`：日線量價分析師的 Prompt 與 JSON 輸出
+同樣以結構化 JSON 產出短期節奏判斷，便於後續 manager 節點做規則整合與除錯。
+<img src="./img_v2/4.png" alt="analyst_daily.llm generation" width="100%"/>
+
+### 5) `analyst_risk.llm`：風險控管分析師的 Prompt 與 JSON 輸出
+此角色重點在「行為約束 / 倉位控管 / 回撤風險」，輸出 notes 會被 manager 用於最後的風險提醒段落。
+<img src="./img_v2/5.png" alt="analyst_risk.llm generation" width="100%"/>
+
+### 6) `manager_merge`（投資經理整合）：Intent 權重 + 最終決策物件
+這個 Span 會記錄 intent 與權重（weekly/daily/risk），並輸出 final_decision（buy/hold/sell + summary + risk），最後交給 format_message 組裝成 LINE 回覆。
+<img src="./img_v2/6.png" alt="manager_merge span final decision" width="100%"/>
+
+> 透過以上觀測方式，當輸出不合理時，可以快速定位是：
+> - 市場資料/指標計算出了問題（fetch_and_analyze）
+> - 某位分析師的 prompt 或 JSON schema 不穩（analyst_xxx.llm）
+> - 加權投票與整合規則需要調整（manager_merge）
+> 讓整個多角色 Agent 流程真正「可追蹤、可解釋、可迭代」。
+
+---
+
 ## 架構檔案詳細說明
 
 
