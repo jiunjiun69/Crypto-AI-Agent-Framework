@@ -979,13 +979,14 @@ BTC 投資建議
 ### 6) `investment_manager`（投資經理整合）：Intent 權重 + 最終決策物件
 這個 Span 會記錄 intent 與權重（weekly/daily/risk），並輸出 final_decision（buy/hold/sell + summary + risk），最後交給 format_message 組裝成 LINE 回覆。
 <img src="./img_v2/6.png" alt="investment_manager span final decision" width="100%"/>
+> 圖片中的命名有調整過(manager_merge => investment_manager)，目前是使用investment_manager
 
 > 透過以上觀測方式，當輸出不合理時，可以快速定位是：
 > - 市場資料/指標計算出了問題（fetch_and_analyze）
 > - 某位分析師的 prompt 或 JSON schema 不穩（analyst_xxx.llm）
 > - 加權投票與整合規則需要調整（investment_manager）
-> 讓整個多角色 Agent 流程真正「可追蹤、可解釋、可迭代」。
-> 圖片中的命名有調整過(manager_merge => investment_manager)，目前是使用investment_manager
+> 讓整個多角色 Agent 流程真正「可追蹤、可解釋、可迭代」
+
 
 ---
 
