@@ -317,7 +317,7 @@ docker compose up -d
 | take_profit    | 1.0    | 0.8   | 1.4  |
 | heavy_position | 1.0    | 1.2   | 0.8  |
 
-最終結論由 **加權投票得分最高者** 決定（buy/hold/sell）。
+最終結論由 **加權投票得分最高者** 決定（BUY/HOLD/SELL）。
 
 ---
 

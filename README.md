@@ -48,7 +48,7 @@ flowchart LR
 
     W -->|文字訊息| L
     L -->|回覆當前 BTC 形勢與建議| U
-````
+```
 
 ---
 
@@ -303,7 +303,7 @@ docker compose up -d
 | take_profit    | 1.0    | 0.8   | 1.4  |
 | heavy_position | 1.0    | 1.2   | 0.8  |
 
-最終結論由 **加權投票得分最高者** 決定（buy/hold/sell）。
+最終結論由 **加權投票得分最高者** 決定（BUY/HOLD/SELL）。
 
 ---
 
@@ -941,7 +941,7 @@ BTC 投資建議
 ✅ 結論：BUY
 
 🧠 重點摘要：
-短線支撐區出現反轉信號，RSI 底背離強化了抄底機會…
+短線支撐區出現反轉信號，短期價格多根日線站穩 SMA50 ，強化了抄底機會…
 
 ⚠️ 風險提醒：
 - 若跌破支撐請重新評估策略
@@ -976,15 +976,16 @@ BTC 投資建議
 此角色重點在「行為約束 / 倉位控管 / 回撤風險」，輸出 notes 會被 manager 用於最後的風險提醒段落。
 <img src="./img_v2/5.png" alt="analyst_risk.llm generation" width="100%"/>
 
-### 6) `manager_merge`（投資經理整合）：Intent 權重 + 最終決策物件
+### 6) `investment_manager`（投資經理整合）：Intent 權重 + 最終決策物件
 這個 Span 會記錄 intent 與權重（weekly/daily/risk），並輸出 final_decision（buy/hold/sell + summary + risk），最後交給 format_message 組裝成 LINE 回覆。
-<img src="./img_v2/6.png" alt="manager_merge span final decision" width="100%"/>
+<img src="./img_v2/6.png" alt="investment_manager span final decision" width="100%"/>
 
 > 透過以上觀測方式，當輸出不合理時，可以快速定位是：
 > - 市場資料/指標計算出了問題（fetch_and_analyze）
 > - 某位分析師的 prompt 或 JSON schema 不穩（analyst_xxx.llm）
-> - 加權投票與整合規則需要調整（manager_merge）
+> - 加權投票與整合規則需要調整（investment_manager）
 > 讓整個多角色 Agent 流程真正「可追蹤、可解釋、可迭代」。
+> 圖片中的命名有調整過(manager_merge => investment_manager)，目前是使用investment_manager
 
 ---
 
